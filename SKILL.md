@@ -1,8 +1,8 @@
 ---
 name: media-summary
-description: Downloads and summarizes audio/video media — podcasts, YouTube videos, talks, interviews, lectures, and conference presentations. Saves a structured markdown summary locally, publishes it as a public GitHub Gist, and opens it in Typora. Use when the user provides a URL to any audio or video content (Apple Podcasts, Spotify, YouTube, conference recordings, etc).
+description: Downloads and summarizes audio/video media — podcasts, YouTube videos, talks, interviews, lectures, and conference presentations. Saves a structured markdown summary locally, publishes it as a public GitHub Gist, and opens it in the system default application. Use when the user provides a URL to any audio or video content (Apple Podcasts, Spotify, YouTube, conference recordings, etc).
 license: MIT
-compatibility: Requires yt-dlp, Python 3, gh CLI (authenticated), and Typora
+compatibility: Requires yt-dlp, Python 3, and gh CLI (authenticated)
 metadata:
   author: cristoslc
 argument-hint: <media-url>

@@ -9,7 +9,7 @@ Given any media URL, it resolves a YouTube equivalent if needed, pulls the trans
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp)
 - Python 3
 - [gh CLI](https://cli.github.com), authenticated
-- [Typora](https://typora.io)
+- A markdown editor or viewer registered as the default for `.md` files
 
 ## Installation
 
