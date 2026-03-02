@@ -1,0 +1,41 @@
+---
+podcast_url: {{ podcast_url }}
+transcript_url: {{ transcript_url }}
+gist_url: {{ gist_url | default("(to be filled after publishing)") }}
+updated: {{ updated }}
+---
+
+# {{ episode_title }}
+
+- **Guest:** {{ guest_name }}, {{ guest_role }}
+- **Hosts:** {{ hosts }}
+- **Podcast:** {{ podcast_name }}
+- **Published:** {{ published_date }}
+
+## Key Takeaways
+
+{{ key_takeaways }}
+
+## Guest Background
+
+{{ guest_background }}
+
+## Core Thesis
+
+{{ core_thesis }}
+
+## Major Topics Discussed
+
+{{ major_topics }}
+
+## Books, Tools & Resources Mentioned
+
+{{ resources }}
+
+## One-Sentence Bottom Line
+
+{{ bottom_line }}
+
+---
+
+*Source: [{{ episode_title }}]({{ source_url }})*
