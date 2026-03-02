@@ -1,8 +1,8 @@
 ---
 name: media-summary
-description: Downloads and summarizes audio/video media — podcasts, YouTube videos, talks, interviews, lectures, and conference presentations. Saves a structured markdown summary locally, publishes it as a public GitHub Gist, and opens it in the system default application. Use when the user provides a URL to any audio or video content (Apple Podcasts, Spotify, YouTube, conference recordings, etc).
+description: Downloads and summarizes audio/video media — podcasts, YouTube videos, talks, interviews, lectures, and conference presentations. Saves a structured markdown summary locally, publishes it as a public GitHub Gist, and opens it in Typora. Use when the user provides a URL to any audio or video content (Apple Podcasts, Spotify, YouTube, conference recordings, etc).
 license: MIT
-compatibility: Requires yt-dlp, Python 3, and gh CLI (authenticated)
+compatibility: Requires yt-dlp, Python 3, gh CLI (authenticated), and Typora
 metadata:
   author: cristoslc
 argument-hint: <media-url>
@@ -30,9 +30,9 @@ yt-dlp --write-auto-sub --sub-lang en --skip-download --sub-format vtt -o "/tmp/
 
 This produces `/tmp/media_transcript.en.vtt`. (The raw transcript stays in `/tmp/` — only the final summary goes to `~/Downloads/`.)
 
-## Step 3 — Parse the VTT into clean text
+## Step 3 — Parse the VTT into clean timestamped lines
 
-Run this Python script to strip timestamps and deduplicate lines:
+Run this Python script. It deduplicates overlapping caption windows using word-overlap detection and preserves timestamps so they can be used as deep-links in the summary:
 
 ```bash
 python3 - << 'EOF'
@@ -41,31 +41,68 @@ import re
 with open('/tmp/media_transcript.en.vtt', 'r') as f:
     content = f.read()
 
-lines = content.split('\n')
-text_lines = []
-seen = set()
-for line in lines:
-    line = line.strip()
-    if not line or line.startswith('WEBVTT') or line.startswith('Kind:') or line.startswith('Language:'):
-        continue
-    if re.match(r'^\d{2}:\d{2}', line) or '-->' in line:
-        continue
-    line = re.sub(r'<[^>]+>', '', line)
-    line = line.strip()
-    if line and line not in seen:
-        seen.add(line)
-        text_lines.append(line)
+# Parse all cue blocks
+cues = []
+for block in re.split(r'\n\n+', content):
+    lines = [l.strip() for l in block.split('\n') if l.strip()]
+    timestamp_line = None
+    text_lines = []
+    for line in lines:
+        if '-->' in line:
+            m = re.match(r'(\d{2}:\d{2}:\d{2})', line)
+            if m:
+                timestamp_line = m.group(1)
+        elif not re.match(r'^\d+$', line) and not line.startswith('WEBVTT') \
+             and not line.startswith('Kind:') and not line.startswith('Language:'):
+            clean = re.sub(r'<[^>]+>', '', line).strip()
+            if clean:
+                text_lines.append(clean)
+    if timestamp_line and text_lines:
+        cues.append((timestamp_line, ' '.join(text_lines)))
 
-transcript = ' '.join(text_lines)
+# Emit only new words per cue, preserving the timestamp of first appearance
+result_lines = []
+emitted_words = []
+
+for timestamp, text in cues:
+    words = text.split()
+    overlap = 0
+    for i in range(min(len(words), len(emitted_words)), 0, -1):
+        if words[:i] == emitted_words[-i:]:
+            overlap = i
+            break
+    new_words = words[overlap:]
+    if new_words:
+        result_lines.append(f'[{timestamp}] {" ".join(new_words)}')
+        emitted_words.extend(new_words)
+
 with open('/tmp/media_clean_transcript.txt', 'w') as f:
-    f.write(transcript)
-print(f"Transcript: {len(transcript)} chars")
+    f.write('\n'.join(result_lines))
+print(f"Saved {len(result_lines)} lines")
 EOF
 ```
 
-## Step 4 — Generate the summary
+Output format — one line per segment:
+```
+[00:00:00] I'm doing something absolutely insane right now.
+[00:00:04] Artificial intelligence is a little bit perplexing
+```
 
-Read `/tmp/media_clean_transcript.txt` in full. Then write a comprehensive, well-structured markdown summary covering:
+## Step 4 — Read the transcript in chunks, then generate the summary
+
+### 4a — Check size and read in batches
+
+First check how many lines the transcript has:
+
+```bash
+wc -l /tmp/media_clean_transcript.txt
+```
+
+Then use the **Read tool** (not Bash) to read the file in batches of **400 lines** using `offset` and `limit`. For a 1000-line file, make three Read calls: offset=1/limit=400, offset=401/limit=400, offset=801/limit=400. Read all batches before writing anything.
+
+### 4b — Write the summary
+
+After reading all batches, write a comprehensive, well-structured markdown summary covering:
 
 - **Speaker/guest background** and why they were invited or why this talk matters
 - **Core thesis / main argument**
@@ -75,6 +112,20 @@ Read `/tmp/media_clean_transcript.txt` in full. Then write a comprehensive, well
 - **One-sentence bottom line**
 
 Use `##` section headers, bullet points, and bold text for scannability. Aim for 800–1200 words of substance.
+
+**Timestamps:** For each major topic or section in the summary, include a YouTube deep-link using the timestamp from the transcript. Convert `[HH:MM:SS]` to total seconds for the `?t=` parameter (e.g. `[01:05:30]` → 3930 seconds). Format as a linked timestamp at the start of the relevant bullet or subheading:
+
+```markdown
+### [[01:05:30]](https://youtu.be/VIDEO_ID?t=3930) Power Concentration
+```
+
+or inline for bullets:
+
+```markdown
+- **[[00:14:00]](https://youtu.be/VIDEO_ID?t=840) Epistemic collapse** — We are entering...
+```
+
+Use the YouTube URL from Step 1 as the base. Include timestamps for every major topic/section — aim for one timestamp per significant topic shift.
 
 ## Step 5 — Write the markdown file
 
