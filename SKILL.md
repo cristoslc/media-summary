@@ -112,10 +112,10 @@ so the published Gist also contains the self-referencing URL.
 
 Print the resulting Gist URL to the user.
 
-## Step 7 — Open in Typora
+## Step 7 — Open the file
 
 ```bash
-open -a Typora ~/Downloads/<slug>_summary.md
+open ~/Downloads/<slug>_summary.md 2>/dev/null || xdg-open ~/Downloads/<slug>_summary.md 2>/dev/null || true
 ```
 
 ## Final output to user
