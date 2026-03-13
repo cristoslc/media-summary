@@ -14,6 +14,50 @@ The user has provided a media URL: $ARGUMENTS
 
 Follow these steps exactly:
 
+## Step 0 — Bootstrap dependencies
+
+Check that the required CLI tools are available. Run:
+
+```bash
+bash -c '
+missing=()
+command -v yt-dlp  >/dev/null 2>&1 || missing+=(yt-dlp)
+command -v python3 >/dev/null 2>&1 || missing+=(python3)
+command -v gh      >/dev/null 2>&1 || missing+=(gh)
+if [[ ${#missing[@]} -eq 0 ]]; then echo "OK"; exit 0; fi
+echo "MISSING: ${missing[*]}"
+
+HAS_UV=0; HAS_BREW=0
+command -v uv   >/dev/null 2>&1 && HAS_UV=1
+command -v brew >/dev/null 2>&1 && HAS_BREW=1
+
+for tool in "${missing[@]}"; do
+  case "$tool" in
+    yt-dlp)
+      if [[ $HAS_UV -eq 1 ]]; then uv tool install yt-dlp
+      elif [[ $HAS_BREW -eq 1 ]]; then brew install yt-dlp
+      else echo "ERROR: need uv or brew to install yt-dlp" >&2; exit 1; fi ;;
+    python3)
+      if [[ $HAS_BREW -eq 1 ]]; then brew install python3
+      elif [[ $HAS_UV -eq 1 ]]; then uv python install
+      else echo "ERROR: need brew or uv to install python3" >&2; exit 1; fi ;;
+    gh)
+      if [[ $HAS_BREW -eq 1 ]]; then brew install gh
+      else echo "ERROR: need brew to install gh — see https://cli.github.com" >&2; exit 1; fi ;;
+  esac
+done
+echo "OK"
+'
+```
+
+If the output is not `OK`, stop and tell the user what to fix before continuing. If `gh` is installed, also verify it is authenticated:
+
+```bash
+gh auth status
+```
+
+If not authenticated, tell the user to run `gh auth login` and stop.
+
 ## Step 1 — Resolve a YouTube URL
 
 If the URL is already a YouTube URL (`youtube.com` or `youtu.be`), use it directly.

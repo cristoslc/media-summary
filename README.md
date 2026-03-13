@@ -11,6 +11,12 @@ Given any media URL, it resolves a YouTube equivalent if needed, pulls the trans
 - [gh CLI](https://cli.github.com), authenticated
 - A markdown editor or viewer registered as the default for `.md` files
 
+Dependencies are automatically installed on first run if `uv` or `brew` is available (prefers `uv`). You can also run the bootstrap manually:
+
+```bash
+./scripts/bootstrap.sh
+```
+
 ## Installation
 
 ```bash
