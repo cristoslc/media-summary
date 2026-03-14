@@ -16,47 +16,13 @@ Follow these steps exactly:
 
 ## Step 0 — Bootstrap dependencies
 
-Check that the required CLI tools are available. Run:
+Run the bootstrap script (`scripts/bootstrap.sh` relative to this skill's directory). It installs missing tools, verifies `gh` is authenticated, and skips subsequent runs via a marker file.
 
 ```bash
-bash -c '
-missing=()
-command -v yt-dlp  >/dev/null 2>&1 || missing+=(yt-dlp)
-command -v python3 >/dev/null 2>&1 || missing+=(python3)
-command -v gh      >/dev/null 2>&1 || missing+=(gh)
-if [[ ${#missing[@]} -eq 0 ]]; then echo "OK"; exit 0; fi
-echo "MISSING: ${missing[*]}"
-
-HAS_UV=0; HAS_BREW=0
-command -v uv   >/dev/null 2>&1 && HAS_UV=1
-command -v brew >/dev/null 2>&1 && HAS_BREW=1
-
-for tool in "${missing[@]}"; do
-  case "$tool" in
-    yt-dlp)
-      if [[ $HAS_UV -eq 1 ]]; then uv tool install yt-dlp
-      elif [[ $HAS_BREW -eq 1 ]]; then brew install yt-dlp
-      else echo "ERROR: need uv or brew to install yt-dlp" >&2; exit 1; fi ;;
-    python3)
-      if [[ $HAS_BREW -eq 1 ]]; then brew install python3
-      elif [[ $HAS_UV -eq 1 ]]; then uv python install
-      else echo "ERROR: need brew or uv to install python3" >&2; exit 1; fi ;;
-    gh)
-      if [[ $HAS_BREW -eq 1 ]]; then brew install gh
-      else echo "ERROR: need brew to install gh — see https://cli.github.com" >&2; exit 1; fi ;;
-  esac
-done
-echo "OK"
-'
+bash "<SKILL_DIR>/scripts/bootstrap.sh"
 ```
 
-If the output is not `OK`, stop and tell the user what to fix before continuing. If `gh` is installed, also verify it is authenticated:
-
-```bash
-gh auth status
-```
-
-If not authenticated, tell the user to run `gh auth login` and stop.
+If it exits non-zero, stop and tell the user what to fix before continuing.
 
 ## Step 1 — Resolve a YouTube URL
 
@@ -76,54 +42,10 @@ This produces `/tmp/media_transcript.en.vtt`. (The raw transcript stays in `/tmp
 
 ## Step 3 — Parse the VTT into clean timestamped lines
 
-Run this Python script. It deduplicates overlapping caption windows using word-overlap detection and preserves timestamps so they can be used as deep-links in the summary:
+Run the VTT parser script (`scripts/parse_vtt.py` relative to this skill's directory). It deduplicates overlapping caption windows and preserves timestamps for deep-linking:
 
 ```bash
-python3 - << 'EOF'
-import re
-
-with open('/tmp/media_transcript.en.vtt', 'r') as f:
-    content = f.read()
-
-# Parse all cue blocks
-cues = []
-for block in re.split(r'\n\n+', content):
-    lines = [l.strip() for l in block.split('\n') if l.strip()]
-    timestamp_line = None
-    text_lines = []
-    for line in lines:
-        if '-->' in line:
-            m = re.match(r'(\d{2}:\d{2}:\d{2})', line)
-            if m:
-                timestamp_line = m.group(1)
-        elif not re.match(r'^\d+$', line) and not line.startswith('WEBVTT') \
-             and not line.startswith('Kind:') and not line.startswith('Language:'):
-            clean = re.sub(r'<[^>]+>', '', line).strip()
-            if clean:
-                text_lines.append(clean)
-    if timestamp_line and text_lines:
-        cues.append((timestamp_line, ' '.join(text_lines)))
-
-# Emit only new words per cue, preserving the timestamp of first appearance
-result_lines = []
-emitted_words = []
-
-for timestamp, text in cues:
-    words = text.split()
-    overlap = 0
-    for i in range(min(len(words), len(emitted_words)), 0, -1):
-        if words[:i] == emitted_words[-i:]:
-            overlap = i
-            break
-    new_words = words[overlap:]
-    if new_words:
-        result_lines.append(f'[{timestamp}] {" ".join(new_words)}')
-        emitted_words.extend(new_words)
-
-with open('/tmp/media_clean_transcript.txt', 'w') as f:
-    f.write('\n'.join(result_lines))
-print(f"Saved {len(result_lines)} lines")
-EOF
+python3 "<SKILL_DIR>/scripts/parse_vtt.py"
 ```
 
 Output format — one line per segment:
@@ -173,7 +95,7 @@ Use the YouTube URL from Step 1 as the base. Include timestamps for every major 
 
 ## Step 5 — Write the markdown file
 
-Determine a clean, slug-style filename from the title, e.g. `jenny-wen-design-process`. Save the summary to:
+Derive a slug from the title using **only lowercase letters, numbers, and hyphens** — strip all other characters (spaces become hyphens, consecutive hyphens collapse to one, leading/trailing hyphens removed). This sanitization is critical: shell metacharacters in the slug (`;`, `$()`, backticks, quotes) would be injected into file paths and `gh` commands below. Example: `jenny-wen-design-process`. Save the summary to:
 
 ```
 ~/Downloads/<slug>_summary.md
@@ -194,23 +116,31 @@ Create a public GitHub Gist with the summary content. The gist filename must be 
 Use the `gh` CLI:
 
 ```bash
-gh gist create --public --filename "summary-<slug>.md" --desc "<Title> — Media Summary" ~/Downloads/<slug>_summary.md
+gh gist create --public --filename "summary-<slug>.md" --desc "<Title> — Media Summary" "$HOME/Downloads/<slug>_summary.md"
 ```
+
+All arguments containing the slug or title **must be double-quoted** to prevent word-splitting and globbing. The `--desc` value is particularly important since the title may contain special characters even after slug sanitization (the description uses the original title, not the slug).
 
 Once you have the Gist URL, update the `gist_url` field in the frontmatter of `~/Downloads/<slug>_summary.md`, then run:
 
 ```bash
-gh gist edit <gist-id> ~/Downloads/<slug>_summary.md
+gh gist edit <gist-id> "$HOME/Downloads/<slug>_summary.md"
 ```
 
 so the published Gist also contains the self-referencing URL.
 
 Print the resulting Gist URL to the user.
 
-## Step 7 — Open the file
+## Step 7 — Open the file and notify
+
+Open the summary in the background (so it doesn't steal focus) and post a macOS notification:
 
 ```bash
-open ~/Downloads/<slug>_summary.md 2>/dev/null || xdg-open ~/Downloads/<slug>_summary.md 2>/dev/null || true
+open -g "$HOME/Downloads/<slug>_summary.md" 2>/dev/null || xdg-open "$HOME/Downloads/<slug>_summary.md" 2>/dev/null || true
+```
+
+```bash
+osascript -e 'display notification "Summary saved and Gist published" with title "Media Summary"' 2>/dev/null || true
 ```
 
 ## Final output to user
