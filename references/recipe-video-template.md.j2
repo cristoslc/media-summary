@@ -1,0 +1,43 @@
+---
+video_url: {{ video_url }}
+transcript_url: {{ transcript_url }}
+gist_url: {{ gist_url | default("(to be filled after publishing)") }}
+updated: {{ updated }}
+---
+
+# {{ recipe_title }}
+
+- **Chef:** {{ chef_name }}
+- **Channel:** {{ channel_name }}
+- **Cuisine:** {{ cuisine_type }}
+- **Published:** {{ published_date }}
+- **Servings:** {{ servings }}
+- **Prep/Cook Time:** {{ time_estimate }}
+
+## Overview
+
+{{ overview }}
+
+## Ingredients
+
+{{ ingredients }}
+
+## Instructions
+
+{{ instructions }}
+
+## Key Techniques & Tips
+
+> {{ tips }}
+
+## Variations & Substitutions
+
+{{ variations }}
+
+## Equipment Mentioned
+
+{{ equipment }}
+
+---
+
+*Source: [{{ recipe_title }}]({{ source_url }})*

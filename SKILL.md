@@ -66,9 +66,20 @@ wc -l /tmp/media_clean_transcript.txt
 
 Then use the **Read tool** (not Bash) to read the file in batches of **400 lines** using `offset` and `limit`. For a 1000-line file, make three Read calls: offset=1/limit=400, offset=401/limit=400, offset=801/limit=400. Read all batches before writing anything.
 
-### 4b — Write the summary
+### 4b — Classify content type
 
-After reading all batches, write a comprehensive, well-structured markdown summary covering:
+After reading all batches, classify the content into one of these types based on the transcript:
+
+| Type | Signals |
+|------|---------|
+| **recipe** | Cooking instructions, ingredient lists/amounts, food preparation steps, kitchen techniques, dish names, "add the…", "cook until…", "season with…" |
+| **general** | Everything else — interviews, talks, lectures, panels, commentary, tutorials, reviews |
+
+Set `CONTENT_TYPE` to `recipe` or `general`. This determines which template and summary structure to use in the following steps.
+
+### 4c — Write the summary
+
+**If `CONTENT_TYPE` is `general`**, write a comprehensive markdown summary covering:
 
 - **Speaker/guest background** and why they were invited or why this talk matters
 - **Core thesis / main argument**
@@ -76,6 +87,15 @@ After reading all batches, write a comprehensive, well-structured markdown summa
 - **Key takeaways and actionable insights**
 - **Books, tools, or resources mentioned**
 - **One-sentence bottom line**
+
+**If `CONTENT_TYPE` is `recipe`**, write a comprehensive markdown summary covering:
+
+- **Overview** — what the dish is, why the chef makes it this way, and who it's for
+- **Ingredients** — full list with quantities, grouped by component if the recipe has distinct parts (e.g. dough, filling, sauce). Use a bulleted list.
+- **Instructions** — numbered step-by-step directions derived from the video, with enough detail to reproduce the dish. Include temperatures, times, and visual cues ("until golden brown").
+- **Key Techniques & Tips** — non-obvious methods, chef's shortcuts, or mistakes to avoid
+- **Variations & Substitutions** — any alternatives the chef mentions (dietary swaps, ingredient substitutions, flavour variations)
+- **Equipment Mentioned** — notable tools, pans, appliances referenced
 
 Use `##` section headers, bullet points, and bold text for scannability. Aim for 800–1200 words of substance.
 
@@ -101,13 +121,26 @@ Derive a slug from the title using **only lowercase letters, numbers, and hyphen
 ~/Downloads/<slug>_summary.md
 ```
 
-Follow the template at `references/media-summary-template.md.j2` (relative to this skill's directory). Key points:
+Choose the template based on `CONTENT_TYPE`:
+
+| Content type | Template |
+|---|---|
+| `general` | `references/media-summary-template.md.j2` |
+| `recipe` | `references/recipe-video-template.md.j2` |
+
+Both paths are relative to this skill's directory. Key points:
 
 - The metadata fields (Guest, Hosts, Podcast, Published) **must be a bullet list**, not bare lines — bare consecutive lines collapse into a single paragraph in CommonMark.
 - **No horizontal rules (`---`) between sections.** Use only one, directly before the italicised source attribution at the bottom.
 - Key Takeaways is the first section, before Guest Background.
 - `gist_url` starts as `(to be filled after publishing)` and is updated in Step 6.
 - The source link at the bottom **prefers YouTube or PocketCasts over Apple Podcasts**. If you already have a YouTube URL from Step 1, use that. Otherwise check for a PocketCasts link (`pca.st` or `pocketcasts.com`). Fall back to the original URL only if neither is available.
+
+**Recipe-specific notes** (when using `recipe-video-template.md.j2`):
+- The metadata fields (Chef, Channel, Cuisine, Published, Servings, Prep/Cook Time) **must be a bullet list**.
+- If the chef doesn't state exact servings or times, estimate from context and note it with "~" (e.g. "~4 servings").
+- Ingredients should include quantities. If the chef eyeballs amounts, write "to taste" or approximate with "~".
+- Instructions must be **numbered steps**, not bullets — order matters in a recipe.
 
 ## Step 6 — Publish as a public GitHub Gist
 
