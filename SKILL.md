@@ -2,7 +2,7 @@
 name: media-summary
 description: Downloads and summarizes audio/video media — podcasts, YouTube videos, talks, interviews, lectures, and conference presentations. Saves a structured markdown summary locally, publishes it as a public GitHub Gist, and opens it in the system default application. Use when the user provides a URL to any audio or video content (Apple Podcasts, Spotify, YouTube, conference recordings, etc).
 license: MIT
-compatibility: Requires yt-dlp, Python 3, and gh CLI (authenticated)
+compatibility: Requires uv and gh CLI (authenticated)
 metadata:
   author: cristoslc
 argument-hint: <media-url>
@@ -30,22 +30,103 @@ If the URL is already a YouTube URL (`youtube.com` or `youtu.be`), use it direct
 
 Otherwise (Apple Podcasts, Spotify, conference sites, etc.), extract the title from the page, then search YouTube for the matching video/episode. Use `mcp__MCP_DOCKER__fetch_content` or `mcp__MCP_DOCKER__brave_web_search` to find it.
 
+**Instagram URLs** (`instagram.com`): Do **not** search YouTube. Keep the original URL and proceed directly to Step 2 — yt-dlp handles Instagram natively.
+
 ## Step 2 — Download the transcript with yt-dlp
 
 Run:
 
 ```bash
-yt-dlp --write-auto-sub --sub-lang en --skip-download --sub-format vtt -o "/tmp/media_transcript" "<YOUTUBE_URL>"
+bash "<SKILL_DIR>/scripts/yt-dlp.sh" --write-auto-sub --sub-lang en --skip-download --sub-format vtt -o "/tmp/media_transcript" "<URL>"
 ```
 
-This produces `/tmp/media_transcript.en.vtt`. (The raw transcript stays in `/tmp/` — only the final summary goes to `~/Downloads/`.)
+Also download metadata (needed for the caption fallback):
+
+```bash
+bash "<SKILL_DIR>/scripts/yt-dlp.sh" --write-info-json --skip-download -o "/tmp/media_transcript" "<URL>"
+```
+
+**Note:** For Instagram URLs, add `--cookies-from-browser chrome` to both commands.
+
+Check whether `/tmp/media_transcript.en.vtt` exists and is non-empty:
+
+```bash
+test -s /tmp/media_transcript.en.vtt && echo "VTT_OK" || echo "VTT_MISSING"
+```
+
+- If `VTT_OK` → proceed to Step 3.
+- If `VTT_MISSING` → go to Step 2a (caption fallback).
+
+### Step 2a — Caption fallback
+
+Read `/tmp/media_transcript.info.json` and extract the `description` field. Strip hashtags (`#\w+`) and leading/trailing whitespace. If the remaining text is **>100 characters**, write it to `/tmp/media_clean_transcript.txt` (one paragraph per line) and **skip Step 3** — go directly to Step 4.
+
+If the caption is insufficient (<=100 non-hashtag characters), go to Step 2b.
+
+### Step 2b — Frame extraction fallback (requires user approval)
+
+**Stop and ask the user:**
+
+> No subtitles or usable caption found for this video. I can extract frames and read the on-screen text to build a transcript. This requires `opencv-python-headless` (~30MB, installed transiently via uv). Proceed?
+
+If the user declines, stop with a message explaining that the video can't be summarized without a transcript source.
+
+If the user approves:
+
+**1. Download the video:**
+
+```bash
+bash "<SKILL_DIR>/scripts/yt-dlp.sh" -o "/tmp/media_video.mp4" "<URL>"
+```
+
+(Add `--cookies-from-browser chrome` for Instagram.)
+
+**2. Extract frames** (scene-change detection):
+
+```bash
+uv run --with opencv-python-headless python3 "<SKILL_DIR>/scripts/extract_frames.py" /tmp/media_video.mp4
+```
+
+This uses histogram comparison to detect scene changes and saves `/tmp/media_frame_000.png`, `/tmp/media_frame_001.png`, etc. The default threshold (0.85) works well for text-overlay videos. Pass a higher value (e.g. 0.92) to capture more frames if results seem sparse.
+
+**3. Probe vision capability:** Use the **Read tool** on `/tmp/media_frame_000.png`. Then attempt to extract any visible text from the image. If you can identify readable text in the frame, vision works — continue with step 4 below. If you cannot read the image or extract meaningful text, fall back to step 5 (local OCR).
+
+**4. Vision OCR (preferred):** Use the **Read tool** on each remaining frame. For each frame, extract all visible on-screen text. Collect all extracted text, deduplicate across frames (adjacent frames often repeat), and write the combined text to `/tmp/media_clean_transcript.txt`. **Skip Step 3** — go directly to Step 4.
+
+**5. Local OCR fallback:** If vision probing failed, inform the user:
+
+> Vision not available with this model. Falling back to local OCR via EasyOCR (~400MB first-run download). Proceed?
+
+If approved, run:
+
+```bash
+uv run --with "easyocr,opencv-python-headless" python3 -c "
+import easyocr, glob
+reader = easyocr.Reader(['en'], gpu=False)
+frames = sorted(glob.glob('/tmp/media_frame_*.png'))
+all_text = []
+seen = set()
+for f in frames:
+    results = reader.readtext(f, detail=0)
+    for line in results:
+        line = line.strip()
+        if line and line not in seen:
+            seen.add(line)
+            all_text.append(line)
+with open('/tmp/media_clean_transcript.txt', 'w') as out:
+    out.write('\n'.join(all_text))
+print(f'Extracted {len(all_text)} unique text lines from {len(frames)} frames')
+"
+```
+
+**Skip Step 3** — go directly to Step 4.
 
 ## Step 3 — Parse the VTT into clean timestamped lines
 
 Run the VTT parser script (`scripts/parse_vtt.py` relative to this skill's directory). It deduplicates overlapping caption windows and preserves timestamps for deep-linking:
 
 ```bash
-python3 "<SKILL_DIR>/scripts/parse_vtt.py"
+uv run "<SKILL_DIR>/scripts/parse_vtt.py"
 ```
 
 Output format — one line per segment:
