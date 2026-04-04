@@ -1,6 +1,6 @@
 ---
 name: media-summary
-description: Downloads and summarizes audio/video media — podcasts, YouTube videos, talks, interviews, lectures, and conference presentations. Saves a structured markdown summary locally, publishes it as a public GitHub Gist, and opens it in the system default application. Use when the user provides a URL to any audio or video content (Apple Podcasts, Spotify, YouTube, conference recordings, etc).
+description: Downloads and summarizes audio/video media — podcasts, YouTube videos, Instagram reels, recipe videos, talks, interviews, lectures, and conference presentations. Handles speech-based transcripts, post captions, and on-screen text overlays (via vision OCR). Saves a structured markdown summary locally, publishes it as a public GitHub Gist, and opens it in the system default application. Use when the user provides a URL to any audio or video content (YouTube, Instagram, Apple Podcasts, Spotify, conference recordings, etc).
 license: MIT
 compatibility: Requires uv and gh CLI (authenticated)
 metadata:
@@ -46,7 +46,13 @@ Also download metadata (needed for the caption fallback):
 bash "<SKILL_DIR>/scripts/yt-dlp.sh" --write-info-json --skip-download -o "/tmp/media_transcript" "<URL>"
 ```
 
-**Note:** For Instagram URLs, add `--cookies-from-browser chrome` to both commands.
+**Note:** For Instagram URLs, add `--cookies-from-browser BROWSER` to both commands, where `BROWSER` is the user's default browser. Detect it with:
+
+```bash
+defaults read ~/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure LSHandlers 2>/dev/null | grep -B1 'https' | grep -o '"com\..*"' | head -1
+```
+
+Map the bundle ID: `com.google.Chrome` → `chrome`, `com.apple.Safari` → `safari`, `org.mozilla.firefox` → `firefox`, `com.brave.Browser` → `brave`. Default to `chrome` if detection fails.
 
 Check whether `/tmp/media_transcript.en.vtt` exists and is non-empty:
 
@@ -79,7 +85,7 @@ If the user approves:
 bash "<SKILL_DIR>/scripts/yt-dlp.sh" -o "/tmp/media_video.mp4" "<URL>"
 ```
 
-(Add `--cookies-from-browser chrome` for Instagram.)
+(For Instagram, add `--cookies-from-browser BROWSER` using the same browser detected above.)
 
 **2. Extract frames** (scene-change detection):
 
@@ -180,7 +186,7 @@ Set `CONTENT_TYPE` to `recipe` or `general`. This determines which template and 
 
 Use `##` section headers, bullet points, and bold text for scannability. Aim for 800–1200 words of substance.
 
-**Timestamps:** For each major topic or section in the summary, include a YouTube deep-link using the timestamp from the transcript. Convert `[HH:MM:SS]` to total seconds for the `?t=` parameter (e.g. `[01:05:30]` → 3930 seconds). Format as a linked timestamp at the start of the relevant bullet or subheading:
+**Timestamps (YouTube sources only):** If the transcript came from a VTT file (Step 3) and a YouTube URL is available, include YouTube deep-links for each major topic or section. Convert `[HH:MM:SS]` to total seconds for the `?t=` parameter (e.g. `[01:05:30]` → 3930 seconds). Format as a linked timestamp at the start of the relevant bullet or subheading:
 
 ```markdown
 ### [[01:05:30]](https://youtu.be/VIDEO_ID?t=3930) Power Concentration
@@ -193,6 +199,8 @@ or inline for bullets:
 ```
 
 Use the YouTube URL from Step 1 as the base. Include timestamps for every major topic/section — aim for one timestamp per significant topic shift.
+
+**No timestamps available:** If the transcript came from caption fallback (Step 2a) or frame extraction (Step 2b), the content has no timestamps. Omit timestamp links entirely — just use plain section headers and bullets.
 
 ## Step 5 — Write the markdown file
 
