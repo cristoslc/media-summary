@@ -22,6 +22,9 @@
 - **Timestamps are conditional** — YouTube deep-links only generated when a VTT transcript and YouTube URL are available. Caption/OCR sources omit timestamps.
 - **README.md** rewritten to document new capabilities, updated permissions, fallback chain, and both summary templates.
 - **Permissions guidance** updated for new tools (`opencv-python-headless`, `easyocr`, `test -s`, `yt-dlp.sh`).
+- **Merged yt-dlp subtitle + metadata calls** into a single invocation (eliminates a redundant network round-trip).
+- **Extracted inline EasyOCR code** to `scripts/ocr_frames.py` for consistency and auditability.
+- **Step 4c summary instructions** now reference the template directly instead of duplicating section lists.
 
 ## 2025-12-15
 

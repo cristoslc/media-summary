@@ -34,19 +34,13 @@ Otherwise (Apple Podcasts, Spotify, conference sites, etc.), extract the title f
 
 ## Step 2 — Download the transcript with yt-dlp
 
-Run:
+Run a single yt-dlp call to download both subtitles and metadata:
 
 ```bash
-bash "<SKILL_DIR>/scripts/yt-dlp.sh" --write-auto-sub --sub-lang en --skip-download --sub-format vtt -o "/tmp/media_transcript" "<URL>"
+bash "<SKILL_DIR>/scripts/yt-dlp.sh" --write-auto-sub --sub-lang en --write-info-json --skip-download --sub-format vtt -o "/tmp/media_transcript" "<URL>"
 ```
 
-Also download metadata (needed for the caption fallback):
-
-```bash
-bash "<SKILL_DIR>/scripts/yt-dlp.sh" --write-info-json --skip-download -o "/tmp/media_transcript" "<URL>"
-```
-
-**Note:** For Instagram URLs, add `--cookies-from-browser BROWSER` to both commands, where `BROWSER` is the user's default browser. Detect it with:
+**Note:** For Instagram URLs, add `--cookies-from-browser BROWSER`, where `BROWSER` is the user's default browser. Detect it with:
 
 ```bash
 defaults read ~/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure LSHandlers 2>/dev/null | grep -B1 'https' | grep -o '"com\..*"' | head -1
@@ -106,23 +100,7 @@ This uses histogram comparison to detect scene changes and saves `/tmp/media_fra
 If approved, run:
 
 ```bash
-uv run --with "easyocr,opencv-python-headless" python3 -c "
-import easyocr, glob
-reader = easyocr.Reader(['en'], gpu=False)
-frames = sorted(glob.glob('/tmp/media_frame_*.png'))
-all_text = []
-seen = set()
-for f in frames:
-    results = reader.readtext(f, detail=0)
-    for line in results:
-        line = line.strip()
-        if line and line not in seen:
-            seen.add(line)
-            all_text.append(line)
-with open('/tmp/media_clean_transcript.txt', 'w') as out:
-    out.write('\n'.join(all_text))
-print(f'Extracted {len(all_text)} unique text lines from {len(frames)} frames')
-"
+uv run --with "easyocr,opencv-python-headless" python3 "<SKILL_DIR>/scripts/ocr_frames.py"
 ```
 
 **Skip Step 3** — go directly to Step 4.
@@ -166,25 +144,7 @@ Set `CONTENT_TYPE` to `recipe` or `general`. This determines which template and 
 
 ### 4c — Write the summary
 
-**If `CONTENT_TYPE` is `general`**, write a comprehensive markdown summary covering:
-
-- **Speaker/guest background** and why they were invited or why this talk matters
-- **Core thesis / main argument**
-- **All major topics discussed** with concrete details, examples, frameworks, and notable quotes
-- **Key takeaways and actionable insights**
-- **Books, tools, or resources mentioned**
-- **One-sentence bottom line**
-
-**If `CONTENT_TYPE` is `recipe`**, write a comprehensive markdown summary covering:
-
-- **Overview** — what the dish is, why the chef makes it this way, and who it's for
-- **Ingredients** — full list with quantities, grouped by component if the recipe has distinct parts (e.g. dough, filling, sauce). Use a bulleted list.
-- **Instructions** — numbered step-by-step directions derived from the video, with enough detail to reproduce the dish. Include temperatures, times, and visual cues ("until golden brown").
-- **Key Techniques & Tips** — non-obvious methods, chef's shortcuts, or mistakes to avoid
-- **Variations & Substitutions** — any alternatives the chef mentions (dietary swaps, ingredient substitutions, flavour variations)
-- **Equipment Mentioned** — notable tools, pans, appliances referenced
-
-Use `##` section headers, bullet points, and bold text for scannability. Aim for 800–1200 words of substance.
+Read the appropriate template (see Step 5 for template selection) and follow its section structure. Fill every section with comprehensive, substantive content drawn from the transcript. Use `##` section headers, bullet points, and bold text for scannability. Aim for 800–1200 words of substance.
 
 **Timestamps (YouTube sources only):** If the transcript came from a VTT file (Step 3) and a YouTube URL is available, include YouTube deep-links for each major topic or section. Convert `[HH:MM:SS]` to total seconds for the `?t=` parameter (e.g. `[01:05:30]` → 3930 seconds). Format as a linked timestamp at the start of the relevant bullet or subheading:
 
