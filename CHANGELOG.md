@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-04-12
+
+### Added
+- **X/Twitter thread support** — new content-type `x-thread` for multi-post X/Twitter threads. Detected from URL (`x.com`, `twitter.com`, `fxtwitter.com`, `fixupx.com` + `/status/<id>`). Unrolled via the public [fxtwitter](https://fxtwitter.com) API (`api.fxtwitter.com/2/thread/{id}`) — no API key or authentication required.
+- **Thread fetcher** (`scripts/fetch_x_thread.py`) — stdlib-only script that calls fxtwitter, writes raw JSON + stitched transcript to `/tmp`, and prints metadata to stdout. Detects and aborts cleanly when the upstream deployment lacks an account proxy (single-post response on a known-multi-post thread opener).
+- **X-thread template** (`references/x-thread-template.md.j2`) — Summary, Key Points, Full Thread (verbatim, each post hyperlinked back to its tweet URL), Links & References.
+
+### Changed
+- **Step 1 restructured** from "Resolve a YouTube URL" to "Classify source and acquire transcript" — explicit dispatch table for X/Twitter, Instagram, YouTube, and other sources. Each leg either runs yt-dlp (existing) or the new fxtwitter fetcher.
+- **Content-type classification** now respects pre-set values. Step 4b skips transcript-based classification when `CONTENT_TYPE` is already set by the source (currently: `x-thread`).
+- **Step 5 template table** adds `x-thread` row; new x-thread-specific rendering notes cover slug derivation, Full Thread numbering with per-post hyperlinks, and timestamp omission.
+- **Permissions** — `Bash(uv run */scripts/fetch_x_thread.py*)` added to recommended allowed-tool patterns; security rationale covers it (stdlib only, no subprocess, fxtwitter is the only network endpoint).
+
 ## 2026-04-04
 
 ### Added

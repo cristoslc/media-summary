@@ -1,0 +1,31 @@
+---
+thread_url: {{ thread_url }}
+gist_url: {{ gist_url | default("(to be filled after publishing)") }}
+updated: {{ updated }}
+---
+
+# {{ thread_title }}
+
+- **Author:** [{{ author_name }}]({{ author_url }}) (@{{ author_handle }})
+- **Posted:** {{ published_date }}
+- **Thread length:** {{ tweet_count }} posts
+
+## Summary
+
+{{ summary }}
+
+## Key Points
+
+{{ key_points }}
+
+## Full Thread
+
+{{ full_thread }}
+
+## Links & References
+
+{{ references }}
+
+---
+
+*Source: [Thread by @{{ author_handle }}]({{ source_url }})*

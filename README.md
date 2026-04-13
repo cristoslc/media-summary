@@ -1,8 +1,8 @@
 # media-summary
 
-A [Claude Code skill](https://agentskills.io) that downloads and summarizes audio/video media — podcasts, YouTube videos, Instagram reels, recipe videos, talks, interviews, lectures, and conference presentations.
+A [Claude Code skill](https://agentskills.io) that downloads and summarizes audio/video media and X/Twitter threads — podcasts, YouTube videos, Instagram reels, recipe videos, talks, interviews, lectures, conference presentations, and multi-post X threads.
 
-Given any media URL, it resolves a YouTube equivalent if needed, pulls the transcript via `yt-dlp`, generates a structured markdown summary, saves it locally, and publishes it as a public GitHub Gist. For videos without speech (e.g., Instagram reels with text overlays), it falls back to post captions or vision-based OCR on extracted frames.
+Given any media or thread URL, it resolves a YouTube equivalent if needed, pulls the transcript via `yt-dlp` (or unrolls the thread via the [fxtwitter](https://fxtwitter.com) API), generates a structured markdown summary, saves it locally, and publishes it as a public GitHub Gist. For videos without speech (e.g., Instagram reels with text overlays), it falls back to post captions or vision-based OCR on extracted frames.
 
 ## Requirements
 
@@ -26,7 +26,7 @@ npx skills add cristoslc/media-summary
 
 To run the skill fully autonomously (no approval prompts), add these to your Claude Code `allowedTools` settings. Each entry is scoped narrowly to limit blast radius.
 
-> **Review before granting.** Before adding these to your allowed tools, read the source files to understand what you're auto-approving: [`scripts/bootstrap.sh`](scripts/bootstrap.sh), [`scripts/parse_vtt.py`](scripts/parse_vtt.py), [`scripts/yt-dlp.sh`](scripts/yt-dlp.sh), and [`scripts/extract_frames.py`](scripts/extract_frames.py).
+> **Review before granting.** Before adding these to your allowed tools, read the source files to understand what you're auto-approving: [`scripts/bootstrap.sh`](scripts/bootstrap.sh), [`scripts/parse_vtt.py`](scripts/parse_vtt.py), [`scripts/yt-dlp.sh`](scripts/yt-dlp.sh), [`scripts/extract_frames.py`](scripts/extract_frames.py), and [`scripts/fetch_x_thread.py`](scripts/fetch_x_thread.py).
 
 ### Recommended (low-risk)
 
@@ -34,6 +34,7 @@ To run the skill fully autonomously (no approval prompts), add these to your Cla
 "Skill(media-summary)",
 "Bash(bash */scripts/bootstrap.sh)",
 "Bash(uv run */scripts/parse_vtt.py)",
+"Bash(uv run */scripts/fetch_x_thread.py*)",
 "Bash(bash */scripts/yt-dlp.sh*)",
 "Bash(uv run --with opencv-python-headless*)",
 "Bash(uv run --with easyocr*)",
@@ -50,6 +51,7 @@ Why these are safe:
 - **`Skill(media-summary)`** — allows skill invocation.
 - **`Bash(bash */scripts/bootstrap.sh)`** — runs every invocation but is a no-op after first run (checks a marker file at `~/.local/share/media-summary/.bootstrapped`, verifies tools exist, exits 0 in ~1ms). On first run, only installs via `uv` or `brew` (trusted package managers). No user-controlled input. No network calls beyond package installs. Safe to auto-approve.
 - **`Bash(uv run */scripts/parse_vtt.py)`** — pure string processing. Reads from a fixed path (`/tmp/media_transcript.en.vtt`), writes to a fixed path (`/tmp/media_clean_transcript.txt`). No `eval`, `exec`, `subprocess`, or network calls. Content is treated as string data, never executed. HTML-like tags (including `<|im_start|>`, `</s>`, and `<!-- comments -->`) are stripped by a `<[^>]+>` regex, which reduces prompt-injection surface area in the cleaned output.
+- **`Bash(uv run */scripts/fetch_x_thread.py*)`** — takes a single X/Twitter URL or tweet ID argument, calls `api.fxtwitter.com` (public, unauthenticated), and writes to fixed paths in `/tmp`. Stdlib only, no `subprocess`, no eval, no filesystem access outside `/tmp`. Network calls are constrained to the fxtwitter hostname.
 - **`Bash(bash */scripts/yt-dlp.sh*)`** — thin wrapper around `uv run --with yt-dlp yt-dlp`. The skill always passes `--skip-download` for transcript/metadata extraction. Full video download only occurs during frame extraction fallback (with user approval).
 - **`Bash(uv run --with opencv-python-headless*)`** — only used for frame extraction from videos already downloaded to `/tmp`. Pure image processing.
 - **`Bash(uv run --with easyocr*)`** — local OCR fallback, only triggered when vision is unavailable. Reads frames from `/tmp`, writes text to `/tmp`.
@@ -95,7 +97,13 @@ On first run, the script also scans your Claude Code settings files (`~/.claude/
 /media-summary <url>
 ```
 
-Supported sources include YouTube, Instagram, Apple Podcasts, Spotify, and most conference recording sites. Non-YouTube URLs are automatically resolved to a YouTube equivalent for transcript extraction (except Instagram, which is handled natively).
+Supported sources include YouTube, Instagram, Apple Podcasts, Spotify, most conference recording sites, and X/Twitter threads. Non-YouTube URLs are automatically resolved to a YouTube equivalent for transcript extraction (except Instagram, which is handled natively, and X threads, which are unrolled via the fxtwitter API).
+
+### X/Twitter threads
+
+For URLs matching `(x|twitter|fxtwitter|fixupx).com/.../status/<id>`, the skill unrolls the thread via `api.fxtwitter.com/2/thread/{id}` — no API key or authentication required. The output preserves every post verbatim with a hyperlinked post number pointing back to the original tweet, plus a model-generated Summary, Key Points, and Links & References section.
+
+Caveat: fxtwitter relies on an authenticated account-proxy to walk self-reply chains. If the public deployment ever loses that proxy, the API silently returns only the root post. The skill detects this case (thread length = 1 but root text looks like a thread opener) and stops with an explicit error.
 
 ### Transcript fallback chain
 
@@ -108,7 +116,7 @@ For videos without speech-based subtitles (common with Instagram reels):
 
 ### Content-type detection
 
-The skill automatically classifies content as **general** (interviews, talks, tutorials, etc.) or **recipe** (cooking videos) and selects the appropriate summary template.
+The skill classifies content as **general** (interviews, talks, tutorials, etc.), **recipe** (cooking videos), or **x-thread** (X/Twitter threads) and selects the appropriate summary template. The `x-thread` type is determined up-front from the URL; `general` vs `recipe` is inferred from the transcript.
 
 ## Output
 
@@ -132,9 +140,17 @@ Each summary is saved to `~/Downloads/<slug>_summary.md` and published as a publ
 5. Variations & Substitutions
 6. Equipment Mentioned
 
+### Summary structure (x-thread)
+
+1. Summary (2–3 paragraphs)
+2. Key Points
+3. Full Thread (every post verbatim, numbered, each number hyperlinked to the original tweet)
+4. Links & References (external URLs, @mentions, hashtags)
+
 ## Templates
 
 Output formats are defined in the `references/` directory:
 
 - [`references/media-summary-template.md.j2`](references/media-summary-template.md.j2) — general content
 - [`references/recipe-video-template.md.j2`](references/recipe-video-template.md.j2) — recipe videos
+- [`references/x-thread-template.md.j2`](references/x-thread-template.md.j2) — X/Twitter threads

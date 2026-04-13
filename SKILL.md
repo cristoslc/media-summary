@@ -1,6 +1,6 @@
 ---
 name: media-summary
-description: Downloads and summarizes audio/video media — podcasts, YouTube videos, Instagram reels, recipe videos, talks, interviews, lectures, and conference presentations. Handles speech-based transcripts, post captions, and on-screen text overlays (via vision OCR). Saves a structured markdown summary locally, publishes it as a public GitHub Gist, and opens it in the system default application. Use when the user provides a URL to any audio or video content (YouTube, Instagram, Apple Podcasts, Spotify, conference recordings, etc).
+description: Downloads and summarizes audio/video media and X/Twitter threads — podcasts, YouTube videos, Instagram reels, recipe videos, talks, interviews, lectures, conference presentations, and multi-post X threads. Handles speech-based transcripts, post captions, on-screen text overlays (via vision OCR), and X thread unrolling via the fxtwitter API. Saves a structured markdown summary locally, publishes it as a public GitHub Gist, and opens it in the system default application. Use when the user provides a URL to any audio/video content or X/Twitter status.
 license: MIT
 compatibility: Requires uv and gh CLI (authenticated)
 metadata:
@@ -24,13 +24,38 @@ bash "<SKILL_DIR>/scripts/bootstrap.sh"
 
 If it exits non-zero, stop and tell the user what to fix before continuing.
 
-## Step 1 — Resolve a YouTube URL
+## Step 1 — Classify source and acquire transcript
 
-If the URL is already a YouTube URL (`youtube.com` or `youtu.be`), use it directly.
+Inspect the URL and dispatch to the matching leg. Each leg ends with `/tmp/media_clean_transcript.txt` written. Some legs also pre-set `CONTENT_TYPE` (consumed in Step 4b).
 
-Otherwise (Apple Podcasts, Spotify, conference sites, etc.), extract the title from the page, then search YouTube for the matching video/episode. Use `mcp__MCP_DOCKER__fetch_content` or `mcp__MCP_DOCKER__brave_web_search` to find it.
+| Source | Detect | Leg | Pre-sets CONTENT_TYPE? |
+|---|---|---|---|
+| X/Twitter thread | `(x\|twitter\|fxtwitter\|fixupx)\.com/.+/status/\d+` | 1a | yes → `x-thread` |
+| Instagram | `instagram.com` | 1b (yt-dlp native) | no |
+| YouTube | `youtube.com`, `youtu.be` | 1c (yt-dlp) | no |
+| Podcast / talk / other | (everything else) | 1c after resolving to YouTube | no |
 
-**Instagram URLs** (`instagram.com`): Do **not** search YouTube. Keep the original URL and proceed directly to Step 2 — yt-dlp handles Instagram natively.
+### Step 1a — X/Twitter thread
+
+Run the thread fetcher. It calls fxtwitter's `/2/thread/{id}` endpoint and writes both the raw JSON and a stitched transcript:
+
+```bash
+uv run "<SKILL_DIR>/scripts/fetch_x_thread.py" "<URL>"
+```
+
+The script prints a metadata JSON object to stdout — capture its fields (`author_name`, `author_handle`, `author_url`, `published_date`, `tweet_count`, `title_guess`, `source_url`, `post_urls`) for Steps 4c and 5.
+
+Set `CONTENT_TYPE=x-thread`. **Skip Steps 2 and 3** — proceed directly to Step 4.
+
+If the script exits non-zero (empty thread, or a thread-opener that only returned one post because the public fxtwitter deployment lacks an account proxy), report the error to the user and stop. Unrollable threads have no summarization path via this skill.
+
+### Step 1b — Instagram
+
+Keep the original URL and proceed to Step 2 with `--cookies-from-browser` (yt-dlp handles Instagram natively — see Step 2 for the flag).
+
+### Step 1c — YouTube / podcast / other
+
+If already a YouTube URL (`youtube.com` or `youtu.be`), use it directly. Otherwise (Apple Podcasts, Spotify, conference sites, etc.), extract the title from the page, then search YouTube for the matching video/episode — use `mcp__MCP_DOCKER__fetch_content` or `mcp__MCP_DOCKER__brave_web_search`. Proceed to Step 2.
 
 ## Step 2 — Download the transcript with yt-dlp
 
@@ -133,7 +158,9 @@ Then use the **Read tool** (not Bash) to read the file in batches of **400 lines
 
 ### 4b — Classify content type
 
-After reading all batches, classify the content into one of these types based on the transcript:
+If `CONTENT_TYPE` was already set in Step 1 (e.g. `x-thread`), skip classification and use that value.
+
+Otherwise, classify the transcript into one of these types:
 
 | Type | Signals |
 |------|---------|
@@ -176,6 +203,7 @@ Choose the template based on `CONTENT_TYPE`:
 |---|---|
 | `general` | `references/media-summary-template.md.j2` |
 | `recipe` | `references/recipe-video-template.md.j2` |
+| `x-thread` | `references/x-thread-template.md.j2` |
 
 Both paths are relative to this skill's directory. Key points:
 
@@ -184,6 +212,14 @@ Both paths are relative to this skill's directory. Key points:
 - Key Takeaways is the first section, before Guest Background.
 - `gist_url` starts as `(to be filled after publishing)` and is updated in Step 6.
 - The source link at the bottom **prefers YouTube or PocketCasts over Apple Podcasts**. If you already have a YouTube URL from Step 1, use that. Otherwise check for a PocketCasts link (`pca.st` or `pocketcasts.com`). Fall back to the original URL only if neither is available.
+
+**X-thread-specific notes** (when using `x-thread-template.md.j2`):
+- Slug derivation: use `<handle>-<first-few-words>` from the metadata printed by `fetch_x_thread.py` (e.g. `schlickw-us-foreign-policy-anthropic-mythos`). Same sanitization rules — lowercase, hyphens only.
+- `thread_url` and `source_url` are the root post's URL from the metadata.
+- **Full Thread** section: render every post in the thread verbatim as a numbered list. Each item is `[N.](post_url) <verbatim text>` — the list number itself is the hyperlink back to that specific post on X. Do not paraphrase; preserve the author's wording, line breaks, and hashtags.
+- **Summary** (2–3 paragraphs) and **Key Points** (bulleted) are generated from the thread content.
+- **Links & References**: extract URLs and `@mention`s from the raw posts; group by type (external links, people mentioned, hashtags).
+- No timestamps — X threads have no internal timeline to deep-link to.
 
 **Recipe-specific notes** (when using `recipe-video-template.md.j2`):
 - The metadata fields (Chef, Channel, Cuisine, Published, Servings, Prep/Cook Time) **must be a bullet list**.
