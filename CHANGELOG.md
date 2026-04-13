@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-04-13
+
+### Changed
+- **X-thread template restructured** — dropped "Key Points" section; replaced with "Context & Annotations" placed after the full thread for editorial material (author bio from X, domain groupings, observations on inferred vs stated content). Order is now Summary → Full Thread → Context & Annotations.
+- **Summary section tightened** — must be 2–4 strictly-descriptive sentences. No inferred author background, no editorial categorization (those move to Annotations).
+- **Full Thread rendering** — every `@mention` and `#hashtag` is now hyperlinked inline; leading auto-mention chains (X's reply-thread artifacts) are stripped from each post.
+
+### Added
+- **Cited-post resolution** — `fetch_x_thread.py` now resolves every X/Twitter status URL referenced inside the thread via the same fxtwitter API, returning a `cited_posts` map keyed by URL. Each citation includes the cited author's text, handle, date, website, attached photo URLs, and Twitter card type.
+- **Self-reply chain capture** — cited tweets are fetched via `/2/thread/{id}` instead of `/status/{id}`, so the script automatically walks the cited author's self-reply chain. Captures two common X patterns: (a) author posts a teaser + photo, then self-replies with the bare article URL; (b) the cited tweet is itself a thread-opener with substantive follow-ups. URLs from self-replies are aggregated into `external_links` with `source_tweet` provenance.
+- **Substantive self-replies in citations** — citation blockquotes now include the cited author's substantive follow-up posts as continuation, cap 3 (link out for more); pure-URL self-replies are skipped since they're already in `external_links`.
+- **Four-tier external-link resolution** — for each citation, SKILL.md instructs progressive disclosure: (1) WebFetch and synopsize URLs from `external_links`, (2) if the cited tweet is a `summary_large_image` card with a photo and no URL, download the photo and use the Read tool to recover the article title/domain from the embedded text, then WebFetch, (3) fall back to `author_website` when the tweet teases an external piece, (4) otherwise skip.
+
 ## 2026-04-12
 
 ### Added
