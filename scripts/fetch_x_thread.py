@@ -105,6 +105,7 @@ def fetch_cited(tweet_id: str) -> Optional[dict]:
         external_links.extend(_non_x_external_links(r))
 
     a = target.get("author") or {}
+    article = target.get("article")
     return {
         "id": target.get("id"),
         "url": target.get("url"),
@@ -125,6 +126,34 @@ def fetch_cited(tweet_id: str) -> Optional[dict]:
             {"url": r.get("url"), "text": r.get("text")}
             for r in self_replies
         ],
+        "article": _summarize_article(article) if article else None,
+    }
+
+
+def _summarize_article(art: dict) -> dict:
+    """Extract a compact representation of an X Article (long-form post).
+
+    Includes title, preview_text, and the first ~6000 chars of body text so the
+    model can synopsize without an additional WebFetch. Full article remains
+    accessible at the cited tweet's URL on x.com.
+    """
+    blocks = ((art.get("content") or {}).get("blocks")) or []
+    parts, total = [], 0
+    for b in blocks:
+        text = (b.get("text") or "").strip()
+        if not text:
+            continue
+        parts.append(text)
+        total += len(text)
+        if total > 6000:
+            break
+    return {
+        "id": art.get("id"),
+        "title": art.get("title"),
+        "preview_text": art.get("preview_text"),
+        "created_at": art.get("created_at"),
+        "body_excerpt": "\n\n".join(parts),
+        "body_truncated": len(blocks) > len(parts),
     }
 
 
