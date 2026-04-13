@@ -13,6 +13,7 @@
 - **Self-reply chain capture** — cited tweets are fetched via `/2/thread/{id}` instead of `/status/{id}`, so the script automatically walks the cited author's self-reply chain. Captures two common X patterns: (a) author posts a teaser + photo, then self-replies with the bare article URL; (b) the cited tweet is itself a thread-opener with substantive follow-ups. URLs from self-replies are aggregated into `external_links` with `source_tweet` provenance.
 - **Substantive self-replies in citations** — citation blockquotes now include the cited author's substantive follow-up posts as continuation, cap 3 (link out for more); pure-URL self-replies are skipped since they're already in `external_links`.
 - **Four-tier external-link resolution** — for each citation, SKILL.md instructs progressive disclosure: (1) WebFetch and synopsize URLs from `external_links`, (2) if the cited tweet is a `summary_large_image` card with a photo and no URL, download the photo and use the Read tool to recover the article title/domain from the embedded text, then WebFetch, (3) fall back to `author_website` when the tweet teases an external piece, (4) otherwise skip.
+- **`generated-by` frontmatter** — all output templates (general, recipe, x-thread) now stamp `generated-by: https://github.com/cristoslc/media-summary` in the YAML frontmatter so summaries are self-attributing.
 
 ## 2026-04-12
 
