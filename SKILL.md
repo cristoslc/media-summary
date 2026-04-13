@@ -211,7 +211,7 @@ Both paths are relative to this skill's directory. Key points:
 - **No horizontal rules (`---`) between sections.** Use only one, directly before the italicised source attribution at the bottom.
 - Key Takeaways is the first section, before Guest Background.
 - `gist_url` starts as `(to be filled after publishing)` and is updated in Step 6.
-- `generated-by.model` must be set to the runtime model identifier (e.g. `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5`). Use the exact model ID from the runtime environment, not a friendly name.
+- `generated_by.model` must be set to the runtime model identifier (e.g. `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5`). Use the exact model ID from the runtime environment, not a friendly name.
 - The source link at the bottom **prefers YouTube or PocketCasts over Apple Podcasts**. If you already have a YouTube URL from Step 1, use that. Otherwise check for a PocketCasts link (`pca.st` or `pocketcasts.com`). Fall back to the original URL only if neither is available.
 
 **X-thread-specific notes** (when using `x-thread-template.md.j2`):
