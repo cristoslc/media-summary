@@ -3,7 +3,9 @@ podcast_url: {{ podcast_url }}
 transcript_url: {{ transcript_url }}
 gist_url: {{ gist_url | default("(to be filled after publishing)") }}
 updated: {{ updated }}
-generated-by: https://github.com/cristoslc/media-summary
+generated-by:
+  skill: https://github.com/cristoslc/media-summary
+  model: {{ model }}
 ---
 
 # {{ episode_title }}
