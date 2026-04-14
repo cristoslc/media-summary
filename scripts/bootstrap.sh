@@ -28,6 +28,16 @@ if ! command -v uv >/dev/null 2>&1; then
   exit 1
 fi
 
+# Node.js is needed for puppeteer (HTML ingestion for JS-heavy pages)
+if ! command -v node >/dev/null 2>&1; then
+  if [[ $HAS_BREW -eq 1 ]]; then
+    install_with_brew node
+  else
+    echo "WARNING: Node.js is required for puppeteer (JS-heavy HTML pages) but not found." >&2
+    echo "  Install manually: https://nodejs.org" >&2
+  fi
+fi
+
 HAS_BREW=0
 command -v brew >/dev/null 2>&1 && HAS_BREW=1
 
@@ -52,6 +62,14 @@ if command -v gh >/dev/null 2>&1; then
     echo "WARNING: gh CLI is installed but not authenticated." >&2
     echo "  Run: gh auth login" >&2
   fi
+fi
+
+# --- Puppeteer npm package (for JS-heavy HTML pages) ---
+SKILL_NODE_DIR="$(dirname "$0")/../node_modules"
+if ! node -e "require('puppeteer')" 2>/dev/null; then
+  echo "  → installing puppeteer via npm …"
+  mkdir -p "$(dirname "$0")"/..
+  npm install --prefix "$(dirname "$0")"/.. puppeteer 2>&1 | tail -1
 fi
 
 # Stamp the marker so subsequent runs exit early
@@ -155,6 +173,9 @@ Add these entries to the allowedTools array:
   "Skill(media-summary)",
   "Bash(bash */scripts/bootstrap.sh)",
   "Bash(uv run */scripts/parse_vtt.py)",
+  "Bash(uv run */scripts/fetch_x_thread.py*)",
+  "Bash(uv run --with readability-lxml*)",
+  "Bash(node */scripts/fetch_html_puppeteer.js*)",
   "Bash(bash */scripts/yt-dlp.sh*)",
   "Bash(uv run --with opencv-python-headless*)",
   "Bash(uv run --with easyocr*)",
@@ -166,8 +187,11 @@ Add these entries to the allowedTools array:
   "Bash(gh gist edit*)"
 
 WHY THESE ARE SAFE:
-  • bootstrap.sh    — no-op after first run; only installs via uv/brew
+  • bootstrap.sh    — no-op after first run; only installs via uv/brew/npm
   • uv run parse_vtt — pure string processing; no eval/exec/subprocess/network
+  • fetch_x_thread   — calls fxtwitter API only; writes to fixed /tmp paths
+  • uv run readability — HTTP GET + article extraction; writes to /tmp only
+  • node puppeteer   — headless Chromium renders page; extracts text; writes to /tmp
   • yt-dlp.sh        — thin uv wrapper; called with --skip-download for subs, full download only for frame extraction
   • opencv/easyocr   — transient via uv; only used when subtitle/caption fallback triggers
   • test -s           — read-only file existence check on /tmp transcript files

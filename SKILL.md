@@ -1,13 +1,13 @@
 ---
 name: media-summary
-description: Downloads and summarizes audio/video media and X/Twitter threads — podcasts, YouTube videos, Instagram reels, recipe videos, talks, interviews, lectures, conference presentations, and multi-post X threads. Handles speech-based transcripts, post captions, on-screen text overlays (via vision OCR), and X thread unrolling via the fxtwitter API. Saves a structured markdown summary locally, publishes it as a public GitHub Gist, and opens it in the system default application. Use when the user provides a URL to any audio/video content or X/Twitter status.
+description: Downloads and summarizes audio/video media, X/Twitter threads, and web articles — podcasts, YouTube videos, Instagram reels, recipe videos, talks, interviews, lectures, conference presentations, multi-post X threads, LinkedIn posts, Medium articles, and any web page. Handles speech-based transcripts, post captions, on-screen text overlays (via vision OCR), X thread unrolling via the fxtwitter API, and generic HTML ingestion via readability/Puppeteer. Saves a structured markdown summary locally, publishes it as a public GitHub Gist, and opens it in the system default application. Use when the user provides a URL to any media content, X/Twitter status, or web article.
 license: MIT
 compatibility: Requires uv and gh CLI (authenticated)
 metadata:
   author: cristoslc
 argument-hint: <media-url>
 user-invocable: true
-allowed-tools: Bash, Write, Read, WebFetch, Agent
+  allowed-tools: Bash, Write, Read, WebFetch, Agent, MCP_DOCKER_brave_web_search, MCP_DOCKER_convert_to_markdown, MCP_DOCKER_browser_navigate, MCP_DOCKER_browser_snapshot
 ---
 
 The user has provided a media URL: $ARGUMENTS
@@ -31,6 +31,7 @@ Inspect the URL and dispatch to the matching leg. Each leg ends with `/tmp/media
 | Source | Detect | Leg | Pre-sets CONTENT_TYPE? |
 |---|---|---|---|
 | X/Twitter thread | `(x\|twitter\|fxtwitter\|fixupx)\.com/.+/status/\d+` | 1a | yes → `x-thread` |
+| Web article / HTML page | Any URL that is not video/audio/thread media | 1d (HTML ingestion) | yes → `html-article` |
 | Instagram | `instagram.com` | 1b (yt-dlp native) | no |
 | YouTube | `youtube.com`, `youtu.be` | 1c (yt-dlp) | no |
 | Podcast / talk / other | (everything else) | 1c after resolving to YouTube | no |
@@ -47,7 +48,7 @@ The script prints a metadata JSON object to stdout — capture its fields (`auth
 
 Set `CONTENT_TYPE=x-thread`. **Skip Steps 2 and 3** — proceed directly to Step 4.
 
-If the script exits non-zero (empty thread, or a thread-opener that only returned one post because the public fxtwitter deployment lacks an account proxy), report the error to the user and stop. Unrollable threads have no summarization path via this skill.
+If the script exits non-zero (empty thread, or a thread-opener that only returned one post because the public fxtwitter deployment lacks an account proxy), **fall through to Step 1d** (generic HTML ingestion) instead of stopping. The single post's text will be extracted as a web article.
 
 ### Step 1b — Instagram
 
@@ -55,7 +56,85 @@ Keep the original URL and proceed to Step 2 with `--cookies-from-browser` (yt-dl
 
 ### Step 1c — YouTube / podcast / other
 
-If already a YouTube URL (`youtube.com` or `youtu.be`), use it directly. Otherwise (Apple Podcasts, Spotify, conference sites, etc.), extract the title from the page, then search YouTube for the matching video/episode — use `mcp__MCP_DOCKER__fetch_content` or `mcp__MCP_DOCKER__brave_web_search`. Proceed to Step 2.
+If already a YouTube URL (`youtube.com` or `youtu.be`), use it directly. Otherwise (Apple Podcasts, Spotify, conference sites, etc.), extract the title from the page, then search YouTube for the matching video/episode — use `mcp__MCP_DOCKER__brave_web_search`. Proceed to Step 2.
+
+### Step 1d — Web article / HTML page (generic HTML ingestion)
+
+For URLs that point to text-based web content (LinkedIn posts, Medium articles, blog posts, Substack, news articles, etc.), ingest the page via a tiered extraction pipeline. This is also the fallback for fxtwitter failures (Step 1a) where only a single post was returned.
+
+**Tier 1 — Specialty domain handler** (run `fetch_html.py` which includes domain-specific logic):
+
+```bash
+uv run --with "readability-lxml,lxml,beautifulsoup4" "<SKILL_DIR>/scripts/fetch_html.py" "<URL>"
+```
+
+The script prints a JSON metadata object to stdout — capture its fields (`title`, `author`, `published_date`, `description`, `site_name`, `source_url`, `content_length`, `needs_browser`). It exits with code:
+
+- **0** — content extracted successfully, `/tmp/media_clean_transcript.txt` written. Set `CONTENT_TYPE=html-article`. Capture the metadata. **Skip Steps 2 and 3** — proceed directly to Step 4.
+- **2** — content too thin (<200 chars), likely needs JavaScript rendering. Proceed to Tier 2.
+- **1** — hard error. Proceed to Tier 2.
+
+**Tier 2 — MCP browser tools** (for JS-heavy pages like LinkedIn):
+
+Use the MCP browser tools to render the page and extract content:
+
+1. Navigate to the URL:
+
+```
+MCP_DOCKER_browser_navigate(url="<URL>")
+```
+
+2. Wait for content to load:
+
+```
+MCP_DOCKER_browser_wait_for(time=3)
+```
+
+3. Take an accessibility snapshot to extract the page text:
+
+```
+MCP_DOCKER_browser_snapshot()
+```
+
+4. Extract the meaningful text content from the snapshot. Look for the main article/post content area — skip navigation, sidebars, and footers.
+
+5. Write the extracted text to `/tmp/media_clean_transcript.txt`.
+
+6. If the snapshot yields substantive content (>200 chars), set `CONTENT_TYPE=html-article`. **Skip Steps 2 and 3** — proceed directly to Step 4.
+
+If MCP browser tools still yield insufficient content, proceed to Tier 3.
+
+**Tier 3 — Puppeteer** (full headless Chromium rendering):
+
+Run the Puppeteer renderer:
+
+```bash
+node "<SKILL_DIR>/scripts/fetch_html_puppeteer.js" "<URL>"
+```
+
+Requires `puppeteer` npm package — bootstrap.sh installs it on first use. The script:
+
+- Launches headless Chromium
+- Navigates to the URL, waits for `networkidle2`
+- Scrolls to trigger lazy-loaded content
+- Tries article-specific selectors (article, main, .post-content, LinkedIn feed selectors, etc.)
+- Falls back to `document.body.innerText`
+
+Exits with code 0 on success (transcript written), 2 if content is still insufficient, 1 on hard error.
+
+On success, set `CONTENT_TYPE=html-article`. **Skip Steps 2 and 3** — proceed directly to Step 4.
+
+**Tier 4 — MCP convert_to_markdown** (last resort for any URL):
+
+```
+MCP_DOCKER_convert_to_markdown(uri="<URL>")
+```
+
+This sends the URL to the MCP server which fetches and converts to markdown. Extract the main content from the returned markdown. Write to `/tmp/media_clean_transcript.txt`. Set `CONTENT_TYPE=html-article`. **Skip Steps 2 and 3** — proceed directly to Step 4.
+
+If all four tiers fail, report the error to the user and stop.
+
+**HTML metadata capture:** Regardless of which tier succeeds, extract the following from the page for use in Steps 4c and 5: `title`, `author`, `published_date`, `description`, `site_name`, `source_url`. These come from the script stdout (Tier 1/3) or must be extracted manually from the MCP browser snapshot (Tier 2) or markdown output (Tier 4).
 
 ## Step 2 — Download the transcript with yt-dlp
 
@@ -158,7 +237,7 @@ Then use the **Read tool** (not Bash) to read the file in batches of **400 lines
 
 ### 4b — Classify content type
 
-If `CONTENT_TYPE` was already set in Step 1 (e.g. `x-thread`), skip classification and use that value.
+If `CONTENT_TYPE` was already set in Step 1 (e.g. `x-thread`, `html-article`), skip classification and use that value.
 
 Otherwise, classify the transcript into one of these types:
 
@@ -204,6 +283,7 @@ Choose the template based on `CONTENT_TYPE`:
 | `general` | `references/media-summary-template.md.j2` |
 | `recipe` | `references/recipe-video-template.md.j2` |
 | `x-thread` | `references/x-thread-template.md.j2` |
+| `html-article` | `references/html-article-template.md.j2` |
 
 Both paths are relative to this skill's directory. Key points:
 
@@ -237,6 +317,17 @@ Both paths are relative to this skill's directory. Key points:
 - If the chef doesn't state exact servings or times, estimate from context and note it with "~" (e.g. "~4 servings").
 - Ingredients should include quantities. If the chef eyeballs amounts, write "to taste" or approximate with "~".
 - Instructions must be **numbered steps**, not bullets — order matters in a recipe.
+
+**html-article-specific notes** (when using `html-article-template.md.j2`):
+- Slug derivation: use `<author-or-site>-<first-few-words>` from the metadata (e.g. `johnpcutler-recently-at-a-conference`). Same sanitization rules — lowercase, hyphens only.
+- The metadata fields (Author, Published, Site) **must be a bullet list**.
+- If `author` is unavailable from metadata, infer from the URL or content (e.g. LinkedIn vanity URL → author handle). Label inferred metadata as _inferred_.
+- If `published_date` is unavailable, use the fetch date and note _date not available from source_.
+- **Overview** should be 2–3 sentences summarizing the article's scope and purpose.
+- **Main Arguments & Points** is the core of the summary — structure as a numbered or bulleted list of the article's key arguments, claims, or observations, with supporting detail.
+- **Notable Details & Examples** captures specific examples, data points, anecdotes, or quotes that illustrate the arguments.
+- **Context & Significance** provides broader context: how this fits into the author's body of work, the field, or current discourse. May include author background if available from the page metadata — label it as "from the author's bio" or similar.
+- No timestamps — HTML articles have no internal timeline.
 
 ## Step 6 — Publish as a public GitHub Gist
 
