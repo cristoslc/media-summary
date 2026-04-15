@@ -11,7 +11,8 @@ type: enhancement
 parent-epic: ""
 parent-initiative: ""
 linked-artifacts: []
-depends-on-artifacts: []
+depends-on-artifacts:
+  - SPIKE-009
 addresses: []
 evidence-pool: ""
 source-issue: ""
@@ -134,9 +135,21 @@ If no YouTube result → check if URL is audio-only (mp3/m4a direct audio)
   → If not: proceed to yt-dlp as before
 ```
 
+## Open Question: Routing Determinism
+
+**Question:** What enforcement layer makes the skill's routing decisions deterministic — preventing future agents from skipping the YouTube search leg or offering OCR for audio-only content?
+
+Options under investigation (see SPIKE-009):
+
+1. **Assertions at decision gates** — fail-fast checks in the skill code
+2. **Explicit branching table** — code block replacing prose conditionals
+3. **State machine** — YAML-defined transitions with required paths
+4. **media-type field in info.json** — pins classification in artifacts for audit
+
 ## Lifecycle
 
 | Phase | Date | Commit | Notes |
 |-------|------|--------|-------|
 | Active | 2026-04-15 | - | Initial creation |
 | Implementable | 2026-04-15 | - | Implementation completed |
+| Active | 2026-04-15 | - | Add routing determinism question + SPIKE-009 |
