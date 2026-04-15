@@ -1,0 +1,12 @@
+# Bootstrap artifacts from scripts/bootstrap.sh (npm install puppeteer)
+node_modules/
+package.json
+package-lock.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# OS
+.DS_Store
