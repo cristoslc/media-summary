@@ -2,7 +2,7 @@
 title: "Audio Transcription Fallback for Podcasts"
 artifact: SPEC-008
 track: implementable
-status: Active
+status: Implemented
 author: cristoslc
 created: 2026-04-15
 last-updated: 2026-04-15
@@ -42,8 +42,8 @@ When `media-summary` encounters a podcast episode (audio-only URL, no YouTube eq
 
 ### Preconditions
 - `uv` is available
-- `ffmpeg` is installed (system-level, required for audio extraction)
-- `faster-whisper` Python package is installed (transient via `uv run --with`)
+- `imageio-ffmpeg` Python package is available (transient via `uv run --with`, bundles ffmpeg binary)
+- `faster-whisper` Python package is available (transient via `uv run --with`)
 
 ### Postconditions
 - Transcript file exists and is non-empty
@@ -61,7 +61,7 @@ When `media-summary` encounters a podcast episode (audio-only URL, no YouTube eq
 2. **Audio-only detection** — When the resolved media has no video streams and no subtitles, the skill detects this as audio-only and skips frame extraction entirely
 3. **Onboard Whisper transcription** — For audio-only media without subtitles, the skill extracts audio via ffmpeg, runs faster-whisper (tiny or base model), and writes the result to `/tmp/media_clean_transcript.txt`
 4. **No OCR prompt** — The Step 2b user prompt is never shown for audio-only content
-5. **Graceful degradation** — If ffmpeg is missing or Whisper fails, the skill falls back to the show notes description (existing Step 2a behavior)
+5. **Graceful degradation** — If imageio-ffmpeg or Whisper fails, the skill falls back to the show notes description (existing Step 2a behavior)
 
 ## Verification
 
@@ -111,8 +111,8 @@ After Step 2a (caption fallback) determines subtitles are missing:
 1. Read `/tmp/media_transcript.info.json`
 2. Check if `formats[0].vcodec == "none"` (audio only) and `subtitles` is empty
 3. If audio-only:
-   a. Extract audio: `ffmpeg -y -i <audio_url> -vn -acodec pcm_s16le -ar 16000 -ac 1 /tmp/media_audio.wav`
-   b. Transcribe: `uv run --with faster-whisper python3 -c "..."` with tiny or base model
+    a. Extract audio: `imageio-ffmpeg` bundles a ffmpeg binary — transcribe_audio.py uses it internally, no system ffmpeg needed
+    b. Transcribe: `uv run --with "faster-whisper,imageio-ffmpeg" python3 -c "..."` with tiny or base model
    c. Write segments to `/tmp/media_clean_transcript.txt` (one sentence per line, no timestamps)
    d. Skip Step 2b (frame extraction) entirely
 4. If extraction fails, use show notes description as fallback (Step 2a behavior)
@@ -139,3 +139,4 @@ If no YouTube result → check if URL is audio-only (mp3/m4a direct audio)
 | Phase | Date | Commit | Notes |
 |-------|------|--------|-------|
 | Active | 2026-04-15 | - | Initial creation |
+| Implementable | 2026-04-15 | - | Implementation completed |

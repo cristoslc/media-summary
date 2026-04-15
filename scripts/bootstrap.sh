@@ -28,6 +28,14 @@ if ! command -v uv >/dev/null 2>&1; then
   exit 1
 fi
 
+HAS_BREW=0
+command -v brew >/dev/null 2>&1 && HAS_BREW=1
+
+install_with_brew() {
+  echo "  → installing $1 via brew …"
+  brew install "$1"
+}
+
 # Node.js is needed for puppeteer (HTML ingestion for JS-heavy pages)
 if ! command -v node >/dev/null 2>&1; then
   if [[ $HAS_BREW -eq 1 ]]; then
@@ -37,14 +45,6 @@ if ! command -v node >/dev/null 2>&1; then
     echo "  Install manually: https://nodejs.org" >&2
   fi
 fi
-
-HAS_BREW=0
-command -v brew >/dev/null 2>&1 && HAS_BREW=1
-
-install_with_brew() {
-  echo "  → installing $1 via brew …"
-  brew install "$1"
-}
 
 # --- gh CLI (not a Python package — brew only) ---
 if ! command -v gh >/dev/null 2>&1; then
@@ -179,6 +179,7 @@ Add these entries to the allowedTools array:
   "Bash(bash */scripts/yt-dlp.sh*)",
   "Bash(uv run --with opencv-python-headless*)",
   "Bash(uv run --with easyocr*)",
+  "Bash(uv run --with faster-whisper*)",
   "Bash(test -s /tmp/media_transcript*)",
   "Bash(gh auth:*)",
   "Bash(open -g ~/Downloads/*_summary.md*)",
@@ -194,6 +195,7 @@ WHY THESE ARE SAFE:
   • node puppeteer   — headless Chromium renders page; extracts text; writes to /tmp
   • yt-dlp.sh        — thin uv wrapper; called with --skip-download for subs, full download only for frame extraction
   • opencv/easyocr   — transient via uv; only used when subtitle/caption fallback triggers
+  • faster-whisper/imageio-ffmpeg — transient via uv; local transcription + bundled ffmpeg, no external API calls
   • test -s           — read-only file existence check on /tmp transcript files
   • gh auth          — read-only status check
   • open -g          — background-only, scoped to ~/Downloads/*_summary.md
@@ -205,6 +207,7 @@ REVIEW BEFORE GRANTING:
   Scripts live at the installed skill location. Read them first:
     ~/.claude/skills/media-summary/scripts/bootstrap.sh
     ~/.claude/skills/media-summary/scripts/parse_vtt.py
+    ~/.claude/skills/media-summary/scripts/transcribe_audio.py
     ~/.claude/skills/media-summary/SKILL.md
 
 THREAT MODEL (what could go wrong):

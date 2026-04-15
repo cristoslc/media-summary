@@ -7,7 +7,7 @@ metadata:
   author: cristoslc
 argument-hint: <media-url>
 user-invocable: true
-  allowed-tools: Bash, Write, Read, WebFetch, Agent, MCP_DOCKER_brave_web_search, MCP_DOCKER_convert_to_markdown, MCP_DOCKER_browser_navigate, MCP_DOCKER_browser_snapshot
+allowed-tools: Bash, Write, Read, WebFetch, Agent, MCP_DOCKER_brave_web_search, MCP_DOCKER_convert_to_markdown, MCP_DOCKER_browser_navigate, MCP_DOCKER_browser_snapshot
 ---
 
 The user has provided a media URL: $ARGUMENTS
@@ -34,7 +34,7 @@ Inspect the URL and dispatch to the matching leg. Each leg ends with `/tmp/media
 | Web article / HTML page | Any URL that is not video/audio/thread media | 1d (HTML ingestion) | yes → `html-article` |
 | Instagram | `instagram.com` | 1b (yt-dlp native) | no |
 | YouTube | `youtube.com`, `youtu.be` | 1c (yt-dlp) | no |
-| Podcast / talk / other | (everything else) | 1c after resolving to YouTube | no |
+| Podcast / talk / other | (everything else) | 1c — YouTube search, then audio-only detection | no |
 
 ### Step 1a — X/Twitter thread
 
@@ -56,7 +56,17 @@ Keep the original URL and proceed to Step 2 with `--cookies-from-browser` (yt-dl
 
 ### Step 1c — YouTube / podcast / other
 
-If already a YouTube URL (`youtube.com` or `youtu.be`), use it directly. Otherwise (Apple Podcasts, Spotify, conference sites, etc.), extract the title from the page, then search YouTube for the matching video/episode — use `mcp__MCP_DOCKER__brave_web_search`. Proceed to Step 2.
+If already a YouTube URL (`youtube.com` or `youtu.be`), use it directly.
+
+Otherwise (Apple Podcasts, Spotify, podcast pages, conference sites, direct audio URLs, etc.):
+
+1. **Extract the episode title** — Use `fetch_html.py` (Tier 1) or the MCP browser snapshot to get the page title. For direct audio URLs (`.mp3`, `.m4a`, `.wav`, `.aac`, `.ogg`, `.opus`), derive a title from the URL slug (strip extension, replace hyphens/underscores with spaces, title-case).
+
+2. **Search YouTube** — Use `mcp__MCP_DOCKER__brave_web_search` to search for `"<title> <site>"` (e.g. `"683 atp.fm"` or `"episode title podcast name"`). If a YouTube result matches the episode title, use that YouTube URL and proceed to Step 2.
+
+3. **If no YouTube match** — Check if the URL is a direct audio file:
+   - If the URL ends in `.mp3`, `.m4a`, `.wav`, `.aac`, `.ogg`, or `.opus` (or the `Content-Type` header from the page indicates audio), set `AUDIO_ONLY=true` and proceed to Step 2 with the original URL (yt-dlp will download the audio).
+   - Otherwise, proceed to Step 2 with the original URL (yt-dlp will attempt to resolve it).
 
 ### Step 1d — Web article / HTML page (generic HTML ingestion)
 
@@ -144,6 +154,8 @@ Run a single yt-dlp call to download both subtitles and metadata:
 bash "<SKILL_DIR>/scripts/yt-dlp.sh" --write-auto-sub --sub-lang en --write-info-json --skip-download --sub-format vtt -o "/tmp/media_transcript" "<URL>"
 ```
 
+If `AUDIO_ONLY=true` (set in Step 1c for direct audio URLs) and yt-dlp fails to extract info, pass the original URL directly to Step 2c — `transcribe_audio.py` accepts URLs and handles audio extraction internally.
+
 **Note:** For Instagram URLs, add `--cookies-from-browser BROWSER`, where `BROWSER` is the user's default browser. Detect it with:
 
 ```bash
@@ -165,7 +177,37 @@ test -s /tmp/media_transcript.en.vtt && echo "VTT_OK" || echo "VTT_MISSING"
 
 Read `/tmp/media_transcript.info.json` and extract the `description` field. Strip hashtags (`#\w+`) and leading/trailing whitespace. If the remaining text is **>100 characters**, write it to `/tmp/media_clean_transcript.txt` (one paragraph per line) and **skip Step 3** — go directly to Step 4.
 
-If the caption is insufficient (<=100 non-hashtag characters), go to Step 2b.
+If the caption is insufficient (<=100 non-hashtag characters), check for audio-only content (Step 2c). If the content is not audio-only, go to Step 2b.
+
+### Step 2c — Audio-only detection and Whisper transcription
+
+Read `/tmp/media_transcript.info.json` and check whether the media is audio-only:
+
+1. Parse the JSON. Look for:
+   - `subtitles` is empty (`{}`) or missing — no subtitle tracks
+   - `formats` entries where `vcodec` is `"none"` — indicating audio-only streams
+   - If all formats have `vcodec == "none"` and subtitles are empty → **audio-only detected**
+
+2. If audio-only:
+   a. **Transcribe with Whisper** (local, no external API). `transcribe_audio.py` bundles its own ffmpeg via `imageio-ffmpeg` — no system ffmpeg needed. It accepts either a local file path or a URL:
+      ```bash
+      AUDIO_URL=$(python3 -c "import json; info=json.load(open('/tmp/media_transcript.info.json')); print(info.get('url',''))")
+      if [ -z "$AUDIO_URL" ]; then
+        AUDIO_URL="<URL>"
+      fi
+      uv run --with "faster-whisper,imageio-ffmpeg" python3 "<SKILL_DIR>/scripts/transcribe_audio.py" "$AUDIO_URL" base
+      ```
+      This extracts audio and transcribes in one step, writing `/tmp/media_clean_transcript.txt` (one sentence per line, no timestamps). If transcription fails, skip to graceful degradation (step 4 below).
+
+   b. Verify `/tmp/media_clean_transcript.txt` exists and is non-empty. If so, **skip Step 3** — go directly to Step 4.
+
+   c. **Skip Step 2b entirely** — no frame extraction or OCR prompt for audio-only content.
+
+3. If not audio-only (media has video streams), go to Step 2b (frame extraction fallback).
+
+4. **Graceful degradation** — If Whisper transcription fails:
+   - If Step 2a produced a description with >100 characters, use that (already written to `/tmp/media_clean_transcript.txt`). Skip Step 3 — go to Step 4.
+   - If no description is available either, report to the user that the podcast could not be transcribed and suggest providing a YouTube link. Do **not** show the Step 2b OCR prompt — frame extraction is meaningless for audio-only content.
 
 ### Step 2b — Frame extraction fallback (requires user approval)
 
@@ -266,7 +308,7 @@ or inline for bullets:
 
 Use the YouTube URL from Step 1 as the base. Include timestamps for every major topic/section — aim for one timestamp per significant topic shift.
 
-**No timestamps available:** If the transcript came from caption fallback (Step 2a) or frame extraction (Step 2b), the content has no timestamps. Omit timestamp links entirely — just use plain section headers and bullets.
+**No timestamps available:** If the transcript came from caption fallback (Step 2a), frame extraction (Step 2b), or Whisper transcription (Step 2c), the content has no timestamps. Omit timestamp links entirely — just use plain section headers and bullets.
 
 ## Step 5 — Write the markdown file
 
