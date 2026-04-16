@@ -265,7 +265,44 @@ Output format — one line per segment:
 [00:00:04] Artificial intelligence is a little bit perplexing
 ```
 
-## Step 4 — Read the transcript in chunks, then generate the summary
+## Step 3.5 — Hard gate: verify transcript and publish to Gist
+
+**This step is mandatory for all source types. Do not skip it.**
+
+All acquisition paths converge on `/tmp/media_clean_transcript.txt`. Verify the transcript is present and substantial before generating anything.
+
+### 3.5a — Verify transcript
+
+```bash
+TRANSCRIPT_CHARS=$(wc -c < /tmp/media_clean_transcript.txt 2>/dev/null || echo 0)
+echo "Transcript size: $TRANSCRIPT_CHARS characters"
+```
+
+If `TRANSCRIPT_CHARS` is less than 200, **STOP**. Do not proceed to Step 4. Tell the user:
+
+> Transcript acquisition failed — `/tmp/media_clean_transcript.txt` is missing or too short (`$TRANSCRIPT_CHARS` chars). A summary cannot be generated without a transcript. Check the steps above for the specific failure.
+
+### 3.5b — Upload transcript to Gist
+
+Derive a working slug from the title captured in Step 1 (use `media-transcript` if no title is available yet). Apply the same sanitization as Step 5: lowercase, hyphens only, no leading/trailing hyphens.
+
+```bash
+TRANSCRIPT_SLUG=$(echo "<title>" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/-\+/-/g;s/^-//;s/-$//')
+gh gist create --public \
+  --filename "transcript-${TRANSCRIPT_SLUG}.txt" \
+  --desc "<Title> — Transcript" \
+  /tmp/media_clean_transcript.txt
+```
+
+Capture the resulting URL as `TRANSCRIPT_GIST_URL`. If the upload fails (non-zero exit), **STOP** and report the error to the user. Do not generate a summary without a confirmed transcript gist.
+
+### 3.5c — Confirm
+
+Print `TRANSCRIPT_GIST_URL` so the user can see it. This URL is carried into Steps 4 and 5.
+
+## Step 4 — Read the transcript, then generate the summary
+
+**The summary must be generated solely from the transcript content read in this step. Do not rely on prior knowledge of the episode, article, or thread. If a claim cannot be traced to a line in the transcript, omit it.**
 
 ### 4a — Check size and read in batches
 
@@ -332,6 +369,7 @@ Both paths are relative to this skill's directory. Key points:
 - The metadata fields (Guest, Hosts, Podcast, Published) **must be a bullet list**, not bare lines — bare consecutive lines collapse into a single paragraph in CommonMark.
 - **No horizontal rules (`---`) between sections.** Use only one, directly before the italicised source attribution at the bottom.
 - Key Takeaways is the first section, before Guest Background.
+- `transcript_url` must be set to `TRANSCRIPT_GIST_URL` captured in Step 3.5. Never leave it blank or as a placeholder.
 - `gist_url` starts as `(to be filled after publishing)` and is updated in Step 6.
 - `generated_by.model` must be set to the runtime model identifier (e.g. `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5`). Use the exact model ID from the runtime environment, not a friendly name.
 - The source link at the bottom **prefers YouTube or PocketCasts over Apple Podcasts**. If you already have a YouTube URL from Step 1, use that. Otherwise check for a PocketCasts link (`pca.st` or `pocketcasts.com`). Fall back to the original URL only if neither is available.
