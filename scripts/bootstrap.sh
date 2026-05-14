@@ -172,24 +172,28 @@ Add these entries to the allowedTools array:
 
   "Skill(media-summary)",
   "Bash(bash */scripts/bootstrap.sh)",
-  "Bash(uv run */scripts/parse_vtt.py)",
+  "Bash(uv run */scripts/parse_subs.py)",
   "Bash(uv run */scripts/fetch_x_thread.py*)",
   "Bash(uv run --with readability-lxml*)",
   "Bash(node */scripts/fetch_html_puppeteer.js*)",
   "Bash(bash */scripts/yt-dlp.sh*)",
   "Bash(uv run --with opencv-python-headless*)",
   "Bash(uv run --with easyocr*)",
+  "Bash(uv run --with mlx-whisper*)",
   "Bash(uv run --with faster-whisper*)",
   "Bash(test -s /tmp/media_transcript*)",
   "Bash(gh auth:*)",
   "Bash(open -g ~/Downloads/*_summary.md*)",
   "Bash(osascript -e 'display notification*)",
+  "Bash(bash */scripts/publish_transcript.sh*)",
+  "Bash(bash */scripts/publish_summary.sh*)",
+  "Bash(bash */scripts/process_yt_output.sh)",
   "Bash(gh gist create --public*)",
   "Bash(gh gist edit*)"
 
 WHY THESE ARE SAFE:
   • bootstrap.sh    — no-op after first run; only installs via uv/brew/npm
-  • uv run parse_vtt — pure string processing; no eval/exec/subprocess/network
+  • uv run parse_subs — pure string processing; discovers subtitle file, parses VTT or SRT, deduplicates overlapping cues, writes to /tmp
   • fetch_x_thread   — calls fxtwitter API only; writes to fixed /tmp paths
   • uv run readability — HTTP GET + article extraction; writes to /tmp only
   • node puppeteer   — headless Chromium renders page; extracts text; writes to /tmp
@@ -202,11 +206,14 @@ WHY THESE ARE SAFE:
   • osascript        — only matches 'display notification', not arbitrary AppleScript
   • gh gist create   — create-only; cannot delete or list existing gists
   • gh gist edit     — edit-only; needed to backfill the self-referencing URL
+  • publish_transcript — verifies transcript ≥200 chars; uploads as gist; exits hard if not
+  • publish_summary  — creates summary gist; backfills URL; opens file; sends notification
+  • process_yt_output — checks VTT; extracts caption fallback; detects audio-only
 
 REVIEW BEFORE GRANTING:
   Scripts live at the installed skill location. Read them first:
     ~/.claude/skills/media-summary/scripts/bootstrap.sh
-    ~/.claude/skills/media-summary/scripts/parse_vtt.py
+    ~/.claude/skills/media-summary/scripts/parse_subs.py
     ~/.claude/skills/media-summary/scripts/transcribe_audio.py
     ~/.claude/skills/media-summary/SKILL.md
 

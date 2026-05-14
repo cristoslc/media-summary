@@ -33,6 +33,7 @@ Inspect the URL and dispatch to the matching leg. Each leg ends with `/tmp/media
 | X/Twitter thread | `(x\|twitter\|fxtwitter\|fixupx)\.com/.+/status/\d+` | 1a | yes → `x-thread` |
 | Web article / HTML page | Any URL that is not video/audio/thread media | 1d (HTML ingestion) | yes → `html-article` |
 | Instagram | `instagram.com` | 1b (yt-dlp native) | no |
+| Facebook | `facebook.com/.../videos/` | 1e (yt-dlp native) | no |
 | YouTube | `youtube.com`, `youtu.be` | 1c (yt-dlp) | no |
 | Podcast / talk / other | (everything else) | 1c — YouTube search, then audio-only detection | no |
 
@@ -71,6 +72,14 @@ Otherwise (Apple Podcasts, Spotify, podcast pages, conference sites, direct audi
 ### Step 1d — Web article / HTML page (generic HTML ingestion)
 
 For URLs that point to text-based web content (LinkedIn posts, Medium articles, blog posts, Substack, news articles, etc.), ingest the page via a tiered extraction pipeline. This is also the fallback for fxtwitter failures (Step 1a) where only a single post was returned.
+
+### Step 1e — Facebook video
+
+Facebook videos are handled by yt-dlp natively. Treat them like YouTube/Instagram:
+
+1. Keep the original URL and proceed directly to **Step 2**.
+2. yt-dlp will extract the `en_US` auto-caption set (if available) or the full transcript from the `description` field.
+3. No special flags needed beyond what's already in Step 2.
 
 **Tier 1 — Specialty domain handler** (run `fetch_html.py` which includes domain-specific logic):
 
@@ -148,11 +157,13 @@ If all four tiers fail, report the error to the user and stop.
 
 ## Step 2 — Download the transcript with yt-dlp
 
-Run a single yt-dlp call to download both subtitles and metadata:
+Run a single yt-dlp call to download subtitles and metadata:
 
 ```bash
-bash "<SKILL_DIR>/scripts/yt-dlp.sh" --write-auto-sub --sub-lang en --write-info-json --skip-download --sub-format vtt -o "/tmp/media_transcript" "<URL>"
+bash "<SKILL_DIR>/scripts/yt-dlp.sh" --write-auto-sub --sub-langs en,en_US --write-info-json --skip-download -o "/tmp/media_transcript" "<URL>"
 ```
+
+yt-dlp writes subtitle files in whatever format the platform serves (VTT for YouTube, SRT for Facebook, etc.). The post-processing script in Step 2a discovers the file dynamically — no ffmpeg dependency.
 
 If `AUDIO_ONLY=true` (set in Step 1c for direct audio URLs) and yt-dlp fails to extract info, pass the original URL directly to Step 2c — `transcribe_audio.py` accepts URLs and handles audio extraction internally.
 
@@ -164,50 +175,46 @@ defaults read ~/Library/Preferences/com.apple.LaunchServices/com.apple.launchser
 
 Map the bundle ID: `com.google.Chrome` → `chrome`, `com.apple.Safari` → `safari`, `org.mozilla.firefox` → `firefox`, `com.brave.Browser` → `brave`. Default to `chrome` if detection fails.
 
-Check whether `/tmp/media_transcript.en.vtt` exists and is non-empty:
+Run the post-processing script to check VTT/SRT, extract caption fallback, and detect audio-only content:
 
 ```bash
-test -s /tmp/media_transcript.en.vtt && echo "VTT_OK" || echo "VTT_MISSING"
+bash "<SKILL_DIR>/scripts/process_yt_output.sh"
 ```
 
-- If `VTT_OK` → proceed to Step 3.
-- If `VTT_MISSING` → go to Step 2a (caption fallback).
+The script prints a status token to stdout:
 
-### Step 2a — Caption fallback
+| Token | Meaning | Next step |
+|---|---|---|
+| `VTT_OK` | VTT file exists and is non-empty | Proceed to Step 3 |
+| `CAPTION_OK` | No VTT, but description (>100 chars) written as fallback to `/tmp/media_clean_transcript.txt` | Skip Step 3 → Step 4 |
+| `AUDIO_ONLY` | No VTT, no caption; media is audio-only | Go to Step 2c below |
+| `VIDEO_NO_SUBS` | No VTT, no caption; has video streams | Go to Step 2b |
+| `CAPTION_THIN` | Description exists but ≤100 non-hashtag chars (also outputs AUDIO_ONLY or VIDEO_NO_SUBS) | Follow the second token |
+| `INFO_MISSING` | info.json not found | Report error to user |
 
-Read `/tmp/media_transcript.info.json` and extract the `description` field. Strip hashtags (`#\w+`) and leading/trailing whitespace. If the remaining text is **>100 characters**, write it to `/tmp/media_clean_transcript.txt` (one paragraph per line) and **skip Step 3** — go directly to Step 4.
+### Step 2c — Whisper transcription (audio-only)
 
-If the caption is insufficient (<=100 non-hashtag characters), check for audio-only content (Step 2c). If the content is not audio-only, go to Step 2b.
+This step is reached only when `process_yt_output.sh` reported `AUDIO_ONLY`.
 
-### Step 2c — Audio-only detection and Whisper transcription
+Transcribe with Whisper (local, no external API). `transcribe_audio.py` auto-detects the platform and uses Metal acceleration on Apple Silicon via `mlx-whisper`, falling back to CPU via `faster-whisper` on other platforms. It bundles its own ffmpeg via `imageio-ffmpeg` — no system ffmpeg needed. It accepts either a local file path or a URL:
 
-Read `/tmp/media_transcript.info.json` and check whether the media is audio-only:
+```bash
+AUDIO_URL=$(python3 -c "import json; info=json.load(open('/tmp/media_transcript.info.json')); print(info.get('url',''))")
+if [ -z "$AUDIO_URL" ]; then
+  AUDIO_URL="<URL>"
+fi
+uv run --with "mlx-whisper,imageio-ffmpeg" python3 "<SKILL_DIR>/scripts/transcribe_audio.py" "$AUDIO_URL" base
+```
 
-1. Parse the JSON. Look for:
-   - `subtitles` is empty (`{}`) or missing — no subtitle tracks
-   - `formats` entries where `vcodec` is `"none"` — indicating audio-only streams
-   - If all formats have `vcodec == "none"` and subtitles are empty → **audio-only detected**
+On non-Apple-Silicon machines, replace `mlx-whisper` with `faster-whisper` in the `--with` flag. If `mlx-whisper` fails on Apple Silicon, the script falls back to CPU automatically and warns the user.
 
-2. If audio-only:
-   a. **Transcribe with Whisper** (local, no external API). `transcribe_audio.py` bundles its own ffmpeg via `imageio-ffmpeg` — no system ffmpeg needed. It accepts either a local file path or a URL:
-      ```bash
-      AUDIO_URL=$(python3 -c "import json; info=json.load(open('/tmp/media_transcript.info.json')); print(info.get('url',''))")
-      if [ -z "$AUDIO_URL" ]; then
-        AUDIO_URL="<URL>"
-      fi
-      uv run --with "faster-whisper,imageio-ffmpeg" python3 "<SKILL_DIR>/scripts/transcribe_audio.py" "$AUDIO_URL" base
-      ```
-      This extracts audio and transcribes in one step, writing `/tmp/media_clean_transcript.txt` (one sentence per line, no timestamps). If transcription fails, skip to graceful degradation (step 4 below).
+This extracts audio and transcribes in one step, writing `/tmp/media_clean_transcript.txt` (one sentence per line, no timestamps). If transcription fails, skip to graceful degradation below.
 
-   b. Verify `/tmp/media_clean_transcript.txt` exists and is non-empty. If so, **skip Step 3** — go directly to Step 4.
+Verify `/tmp/media_clean_transcript.txt` exists and is non-empty. If so, **skip Step 3** — go directly to Step 4.
 
-   c. **Skip Step 2b entirely** — no frame extraction or OCR prompt for audio-only content.
-
-3. If not audio-only (media has video streams), go to Step 2b (frame extraction fallback).
-
-4. **Graceful degradation** — If Whisper transcription fails:
-   - If Step 2a produced a description with >100 characters, use that (already written to `/tmp/media_clean_transcript.txt`). Skip Step 3 — go to Step 4.
-   - If no description is available either, report to the user that the podcast could not be transcribed and suggest providing a YouTube link. Do **not** show the Step 2b OCR prompt — frame extraction is meaningless for audio-only content.
+**Graceful degradation** — If Whisper transcription fails:
+- If `process_yt_output.sh` had reported `CAPTION_THIN` (description ≤100 chars), that text was not written. Manually check if a description exists in info.json and use it if >0 chars.
+- Otherwise, report to the user that the podcast could not be transcribed and suggest providing a YouTube link. Do **not** show the Step 2b OCR prompt — frame extraction is meaningless for audio-only content.
 
 ### Step 2b — Frame extraction fallback (requires user approval)
 
@@ -251,12 +258,18 @@ uv run --with "easyocr,opencv-python-headless" python3 "<SKILL_DIR>/scripts/ocr_
 
 **Skip Step 3** — go directly to Step 4.
 
-## Step 3 — Parse the VTT into clean timestamped lines
+## Step 3 — Parse the subtitle file into clean timestamped lines
 
-Run the VTT parser script (`scripts/parse_vtt.py` relative to this skill's directory). It deduplicates overlapping caption windows and preserves timestamps for deep-linking:
+Run the subtitle parser script (`scripts/parse_subs.py` relative to this skill's directory). It discovers the subtitle file (VTT or SRT) written by `process_yt_output.sh`, deduplicates overlapping caption windows, and preserves timestamps for deep-linking:
 
 ```bash
-uv run "<SKILL_DIR>/scripts/parse_vtt.py"
+uv run "<SKILL_DIR>/scripts/parse_subs.py"
+```
+
+Output format — one line per segment:
+```
+[00:00:00] I'm doing something absolutely insane right now.
+[00:00:04] Artificial intelligence is a little bit perplexing
 ```
 
 Output format — one line per segment:
@@ -269,36 +282,16 @@ Output format — one line per segment:
 
 **This step is mandatory for all source types. Do not skip it.**
 
-All acquisition paths converge on `/tmp/media_clean_transcript.txt`. Verify the transcript is present and substantial before generating anything.
-
-### 3.5a — Verify transcript
+Run the publish_transcript script, which verifies the transcript is present and substantial, then uploads it as a public GitHub Gist. Derive a title from the metadata captured in Step 1 (use `media-transcript` if no title is available yet):
 
 ```bash
-TRANSCRIPT_CHARS=$(wc -c < /tmp/media_clean_transcript.txt 2>/dev/null || echo 0)
-echo "Transcript size: $TRANSCRIPT_CHARS characters"
+bash "<SKILL_DIR>/scripts/publish_transcript.sh" "<title>"
 ```
 
-If `TRANSCRIPT_CHARS` is less than 200, **STOP**. Do not proceed to Step 4. Tell the user:
+The script prints `TRANSCRIPT_GIST_URL=<url>` on stdout. If it exits non-zero, **STOP** — do not proceed to Step 4. The exit code tells you why:
 
-> Transcript acquisition failed — `/tmp/media_clean_transcript.txt` is missing or too short (`$TRANSCRIPT_CHARS` chars). A summary cannot be generated without a transcript. Check the steps above for the specific failure.
-
-### 3.5b — Upload transcript to Gist
-
-Derive a working slug from the title captured in Step 1 (use `media-transcript` if no title is available yet). Apply the same sanitization as Step 5: lowercase, hyphens only, no leading/trailing hyphens.
-
-```bash
-TRANSCRIPT_SLUG=$(echo "<title>" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/-\+/-/g;s/^-//;s/-$//')
-gh gist create --public \
-  --filename "transcript-${TRANSCRIPT_SLUG}.txt" \
-  --desc "<Title> — Transcript" \
-  /tmp/media_clean_transcript.txt
-```
-
-Capture the resulting URL as `TRANSCRIPT_GIST_URL`. If the upload fails (non-zero exit), **STOP** and report the error to the user. Do not generate a summary without a confirmed transcript gist.
-
-### 3.5c — Confirm
-
-Print `TRANSCRIPT_GIST_URL` so the user can see it. This URL is carried into Steps 4 and 5.
+- **1** — transcript missing or too short (<200 chars)
+- **2** — gist upload failed
 
 ## Step 4 — Read the transcript, then generate the summary
 
@@ -411,37 +404,13 @@ Both paths are relative to this skill's directory. Key points:
 
 ## Step 6 — Publish as a public GitHub Gist
 
-Create a public GitHub Gist with the summary content. The gist filename must be prefixed with `summary-`, e.g. `summary-jenny-wen-design-process.md`.
-
-Use the `gh` CLI:
+Run the publish_summary script, which creates the gist, backfills the self-referencing `gist_url`, re-edits the gist, opens the file, and posts a macOS notification:
 
 ```bash
-gh gist create --public --filename "summary-<slug>.md" --desc "<Title> — Media Summary" "$HOME/Downloads/<slug>_summary.md"
+bash "<SKILL_DIR>/scripts/publish_summary.sh" "<slug>" "<title>"
 ```
 
-All arguments containing the slug or title **must be double-quoted** to prevent word-splitting and globbing. The `--desc` value is particularly important since the title may contain special characters even after slug sanitization (the description uses the original title, not the slug).
-
-Once you have the Gist URL, update the `gist_url` field in the frontmatter of `~/Downloads/<slug>_summary.md`, then run:
-
-```bash
-gh gist edit <gist-id> "$HOME/Downloads/<slug>_summary.md"
-```
-
-so the published Gist also contains the self-referencing URL.
-
-Print the resulting Gist URL to the user.
-
-## Step 7 — Open the file and notify
-
-Open the summary in the background (so it doesn't steal focus) and post a macOS notification:
-
-```bash
-open -g "$HOME/Downloads/<slug>_summary.md" 2>/dev/null || xdg-open "$HOME/Downloads/<slug>_summary.md" 2>/dev/null || true
-```
-
-```bash
-osascript -e 'display notification "Summary saved and Gist published" with title "Media Summary"' 2>/dev/null || true
-```
+Both arguments **must be double-quoted** to prevent word-splitting and globbing. The script prints the Gist URL to stdout on success. If it exits non-zero, report the error to the user.
 
 ## Final output to user
 

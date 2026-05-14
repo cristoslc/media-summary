@@ -27,14 +27,14 @@ npx skills add cristoslc/media-summary
 
 To run the skill fully autonomously (no approval prompts), add these to your Claude Code `allowedTools` settings. Each entry is scoped narrowly to limit blast radius.
 
-> **Review before granting.** Before adding these to your allowed tools, read the source files to understand what you're auto-approving: [`scripts/bootstrap.sh`](scripts/bootstrap.sh), [`scripts/parse_vtt.py`](scripts/parse_vtt.py), [`scripts/yt-dlp.sh`](scripts/yt-dlp.sh), [`scripts/extract_frames.py`](scripts/extract_frames.py), and [`scripts/fetch_x_thread.py`](scripts/fetch_x_thread.py).
+> **Review before granting.** Before adding these to your allowed tools, read the source files to understand what you're auto-approving:   [`scripts/bootstrap.sh`](scripts/bootstrap.sh), [`scripts/parse_subs.py`](scripts/parse_subs.py), [`scripts/yt-dlp.sh`](scripts/yt-dlp.sh), [`scripts/extract_frames.py`](scripts/extract_frames.py), and [`scripts/fetch_x_thread.py`](scripts/fetch_x_thread.py).
 
 ### Recommended (low-risk)
 
 ```json
 "Skill(media-summary)",
 "Bash(bash */scripts/bootstrap.sh)",
-"Bash(uv run */scripts/parse_vtt.py)",
+"Bash(uv run */scripts/parse_subs.py*)",
 "Bash(uv run */scripts/fetch_x_thread.py*)",
 "Bash(uv run --with readability-lxml*)",
 "Bash(node */scripts/fetch_html_puppeteer.js*)",
@@ -53,7 +53,7 @@ Why these are safe:
 
 - **`Skill(media-summary)`** — allows skill invocation.
 - **`Bash(bash */scripts/bootstrap.sh)`** — runs every invocation but is a no-op after first run (checks a marker file at `~/.local/share/media-summary/.bootstrapped`, verifies tools exist, exits 0 in ~1ms). On first run, only installs via `uv` or `brew` (trusted package managers). No user-controlled input. No network calls beyond package installs. Safe to auto-approve.
-- **`Bash(uv run */scripts/parse_vtt.py)`** — pure string processing. Reads from a fixed path (`/tmp/media_transcript.en.vtt`), writes to a fixed path (`/tmp/media_clean_transcript.txt`). No `eval`, `exec`, `subprocess`, or network calls. Content is treated as string data, never executed. HTML-like tags (including `<|im_start|>`, `</s>`, and `<!-- comments -->`) are stripped by a `<[^>]+>` regex, which reduces prompt-injection surface area in the cleaned output.
+- **`Bash(uv run */scripts/parse_subs.py*)`** — pure string processing. Discovers subtitle file (VTT or SRT) from `/tmp/media_subtitle_path.txt` or scans `/tmp`, deduplicates overlapping caption windows, writes to `/tmp/media_clean_transcript.txt`. No `eval`, `exec`, `subprocess`, or network calls. Content is treated as string data, never executed. HTML-like tags (including `<|im_start|>`, `</s>`, and `<!-- comments -->`) are stripped by a `<[^>]+>` regex, which reduces prompt-injection surface area in the cleaned output.
 - **`Bash(uv run */scripts/fetch_x_thread.py*)`** — takes a single X/Twitter URL or tweet ID argument, calls `api.fxtwitter.com` (public, unauthenticated), and writes to fixed paths in `/tmp`. Stdlib only, no `subprocess`, no eval, no filesystem access outside `/tmp`. Network calls are constrained to the fxtwitter hostname.
 - **`Bash(uv run --with readability-lxml*)`** — runs `fetch_html.py` which HTTP GETs the URL and extracts article text via readability. Writes to fixed `/tmp` paths. No `subprocess`, no eval. Network calls go only to the user-provided URL.
 - **`Bash(node */scripts/fetch_html_puppeteer.js*)`** — launches headless Chromium, renders the page, extracts text. Writes to fixed `/tmp` paths. No arbitrary filesystem access.
@@ -88,7 +88,7 @@ Risks:
 - **Skill supply chain.** A malicious fork of this skill could rewrite SKILL.md or the scripts to do anything Claude Code's permissions allow. Only install from sources you trust. Review the skill contents after installation (`~/.claude/skills/media-summary/`).
 - **Gist content poisoning.** If prompt injection succeeds in influencing the summary, misleading content gets published as a public gist under your GitHub account. Low-probability but worth knowing about.
 - **Video title → shell injection.** The title flows into `--desc` for `gh gist create` and into the slug for file paths. Mitigated by: slug sanitization (lowercase alphanumeric + hyphens only), and explicit double-quoting of all shell arguments in SKILL.md.
-- **`/tmp` symlink attack.** An attacker with local access could symlink `/tmp/media_transcript.en.vtt` to a sensitive file, causing the parser to read it. Requires existing local access (at which point the attacker already has your permissions). Very low risk.
+- **`/tmp` symlink attack.** An attacker with local access could symlink `/tmp/media_subtitle_path.txt` or `/tmp/media_transcript.*.vtt` to a sensitive file, causing the parser to read it. Requires existing local access (at which point the attacker already has your permissions). Very low risk.
 
 ### Bootstrap
 
@@ -102,7 +102,7 @@ On first run, the script also scans your Claude Code settings files (`~/.claude/
 /media-summary <url>
 ```
 
-Supported sources include YouTube, Instagram, Apple Podcasts, Spotify, most conference recording sites, X/Twitter threads, LinkedIn posts, Medium articles, and any web page. Non-YouTube media URLs are automatically resolved to a YouTube equivalent for transcript extraction. X threads are unrolled via the fxtwitter API. Web articles are ingested via a tiered pipeline: readability extraction → MCP browser tools → Puppeteer → MCP convert-to-markdown.
+Supported sources include YouTube, Facebook, Instagram, Apple Podcasts, Spotify, most conference recording sites, X/Twitter threads, LinkedIn posts, Medium articles, and any web page. Non-YouTube media URLs are automatically resolved to a YouTube equivalent for transcript extraction. X threads are unrolled via the fxtwitter API. Web articles are ingested via a tiered pipeline: readability extraction → MCP browser tools → Puppeteer → MCP convert-to-markdown.
 
 ### X/Twitter threads
 
@@ -121,11 +121,15 @@ For any URL pointing to text-based web content (LinkedIn posts, Medium articles,
 
 Each tier falls through to the next if content is insufficient (<200 chars). LinkedIn is a primary specialty target: the script tries embed URLs (`/embed/feed/update/urn:li:activity:...`) before the main URL to bypass auth walls.
 
+### Facebook videos
+
+Facebook public videos are handled natively by yt-dlp. Auto-captions (typically labeled `en_US`) are downloaded and parsed alongside any subtitles available. If auto-captions are missing and the description field contains the full transcript text (common for "talking head" style videos), the description is used as a fallback. No Facebook authentication is required for public videos.
+
 ### Transcript fallback chain
 
-For videos without speech-based subtitles (common with Instagram reels):
+For videos without speech-based subtitles (common with Instagram reels or Facebook videos with captions disabled):
 
-1. **Subtitles** — yt-dlp auto-generated subtitles (default path)
+1. **Subtitles** — yt-dlp auto-generated subtitles (VTT for YouTube, SRT for Facebook)
 2. **Post caption** — extracted from metadata if >100 non-hashtag characters
 3. **Vision OCR** — frames extracted via scene-change detection, read by the model (requires user approval)
 4. **Local OCR** — EasyOCR fallback if the model lacks vision capabilities (requires user approval, ~400MB first-run download)
